@@ -1,0 +1,60 @@
+# --- Python Artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual Environments ---
+# uv creates a .venv folder by default
+.venv/
+env/
+venv/
+ENV/
+
+# --- Project Specific: Training & ML ---
+# Ignore the model weights and checkpoints generated during GRPO training
+msme_rl_checkpoints/
+checkpoints/
+*.pt
+*.bin
+*.pth
+*.safetensors
+
+# Ignore local training result plots and data
+reward_curve.png
+reward_curve.json
+
+# --- Environment & Sensitive Data ---
+.env
+.venv
+env.bak
+venv.bak
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
