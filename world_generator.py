@@ -40,9 +40,9 @@ NPA_RATES = {
 }
 
 MSME_CLUSTER_CONTAGION_FACTOR = 2.3  # SIDBI MSME Pulse: 1 default → 2.3 connected defaults
-STARTUP_GHOSTING_BASE = 0.22          # public NBFC filings
+STARTUP_GHOSTING_BASE = 0.22         # public NBFC filings
 
-MORATORIUM_RECOVERY_RATE = 0.67       # IBA study 2023
+MORATORIUM_RECOVERY_RATE = 0.67      # IBA study 2023
 SARFAESI_RECOVERY_RATE   = 0.31
 
 
@@ -127,6 +127,7 @@ def generate_msme_profile(
     episode: int,
     cluster_id: int,
     cluster_members: List[int],
+    difficulty: float, # FIXED: RLVE curriculum difficulty injected
 ) -> Dict[str, Any]:
     """
     Generate a hidden MSME profile.  Agent NEVER sees this directly.
@@ -135,13 +136,18 @@ def generate_msme_profile(
     business_name, promoter = MSME_BUSINESSES[idx]
     industry = MSME_INDUSTRIES[(account_id + episode) % len(MSME_INDUSTRIES)]
 
-    # Deterministic-but-varied hidden state
-    base_health = 0.35 + _rng_seed(episode, account_id, "health") * 0.55
-    trajectory  = "declining" if _rng_seed(episode, account_id, "traj") > 0.55 else "stable"
-    if trajectory == "declining":
-        base_health = max(0.15, base_health - 0.20)
+    # FIXED: Adaptive difficulty. Push to extremes when difficulty is low.
+    if difficulty < 0.4:
+        base_health = 0.85 if _rng_seed(episode, account_id, "h") > 0.5 else 0.15
+        trajectory = "stable"
+        strategic_default = False
+    else:
+        base_health = 0.35 + _rng_seed(episode, account_id, "health") * 0.55
+        trajectory  = "declining" if _rng_seed(episode, account_id, "traj") > 0.55 else "stable"
+        if trajectory == "declining":
+            base_health = max(0.15, base_health - 0.20)
+        strategic_default = _rng_seed(episode, account_id, "strat") < (0.12 * difficulty)
 
-    strategic_default = _rng_seed(episode, account_id, "strat") < 0.12
     cluster_centrality = _rng_seed(episode, account_id, "clust")
 
     # Crisis: calibrated to industry NPA rates
@@ -198,6 +204,7 @@ def generate_startup_profile(
     account_id: int,
     episode: int,
     ecosystem_network: List[int],
+    difficulty: float, # FIXED
 ) -> Dict[str, Any]:
     """
     Generate a hidden startup profile.  Agent NEVER sees true runway.
@@ -205,7 +212,12 @@ def generate_startup_profile(
     idx = (account_id - 21) % len(STARTUP_COMPANIES)
     company, founder, sector, stage = STARTUP_COMPANIES[idx]
 
-    true_runway = int(1 + _rng_seed(episode, account_id, "runway") * 18)
+    # FIXED: Adaptive difficulty for runway
+    if difficulty < 0.4:
+        true_runway = 20 if _rng_seed(episode, account_id, "r") > 0.5 else 2
+    else:
+        true_runway = int(1 + _rng_seed(episode, account_id, "runway") * 18)
+
     founder_optimism_bias = 0.5 + _rng_seed(episode, account_id, "opt") * 0.45
 
     npa_rate = NPA_RATES.get(stage, 0.10)
@@ -353,6 +365,9 @@ def generate_portfolio(episode: int) -> Dict[str, Any]:
     Generate a full episode portfolio: 20 MSME + 10 startup accounts.
     Returns both hidden profiles (for simulation) and observable signals (for agent).
     """
+    # FIXED: Calculate RLVE difficulty based on episode count
+    difficulty = min(1.0, episode / 50.0)
+
     msme_ids   = list(range(1, 21))
     startup_ids = list(range(21, 31))
 
@@ -365,14 +380,14 @@ def generate_portfolio(episode: int) -> Dict[str, Any]:
     # Generate MSME accounts
     for acc_id in msme_ids:
         cluster_id, cluster_members = msme_clusters[acc_id]
-        profile = generate_msme_profile(acc_id, episode, cluster_id, cluster_members)
+        profile = generate_msme_profile(acc_id, episode, cluster_id, cluster_members, difficulty)
         hidden_profiles[acc_id] = profile
         observable_states[acc_id] = build_msme_observable(profile)
 
     # Generate startup accounts
     for acc_id in startup_ids:
         ecosystem = startup_ecosystem[acc_id]
-        profile = generate_startup_profile(acc_id, episode, ecosystem)
+        profile = generate_startup_profile(acc_id, episode, ecosystem, difficulty)
         hidden_profiles[acc_id] = profile
         observable_states[acc_id] = build_startup_observable(profile)
 
