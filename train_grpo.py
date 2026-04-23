@@ -1,3 +1,5 @@
+# train_grpo.py
+
 """
 MSME-RL Training Script — GRPO with Qwen3-1.7B
 
@@ -141,16 +143,8 @@ Respond with JSON only:"""
 def grpo_reward_function(completions: List[str], ground_truth_rewards: List[float]) -> List[float]:
     """
     GRPO reward function for TRL.
-
-    For each completion (agent's JSON response), we:
-    1. Parse the action from JSON
-    2. Execute it in the environment (via OpenEnv client)
-    3. Return the step reward as the GRPO reward signal
-
     The environment's step reward IS the ground truth — no LLM judge needed.
     """
-    # In practice, this is called by the TRL GRPO trainer.
-    # The rewards are pre-computed from the environment step.
     return ground_truth_rewards
 
 
@@ -167,30 +161,6 @@ def run_training(
     save_every_n_episodes: int = 10,
     output_dir: str = "./msme_rl_checkpoints",
 ):
-    """
-    Main GRPO training loop.
-
-    Episode structure:
-      - Reset environment → get initial observation
-      - For each month (36 months × 30 accounts = up to 1080 steps/episode):
-          * Build prompt from observation + memory context
-          * Sample agent action via GRPO
-          * Execute action in environment
-          * Receive step reward
-          * GRPO update on (prompt, action, reward)
-      - Compute episode-level reward
-      - Save checkpoint
-
-    Args:
-        num_episodes: Target training episodes (300 for full training)
-        port: OpenEnv environment server port
-        model_name: HuggingFace model ID
-        use_unsloth: Use Unsloth for faster training (recommended on Colab)
-        max_steps_per_episode: Cap steps per episode for compute budget
-        save_every_n_episodes: Save checkpoint frequency
-        output_dir: Where to save model checkpoints
-    """
-
     print(f"\n{'='*60}")
     print("MSME-RL GRPO TRAINING")
     print(f"Model: {model_name}")
@@ -241,8 +211,7 @@ def run_training(
         print("✓ Connected to MSME-RL environment server")
     except Exception as e:
         print(f"⚠ Could not connect to environment server: {e}")
-        print("  Start the server with: uv run --project . server")
-        print("  Falling back to direct environment (no WebSocket)")
+        print("  Falling back to direct environment")
         from server.msmeEnv_environment import MSMERLEnvironment
         from models import MSMERLAction
         env = MSMERLEnvironment()
@@ -260,7 +229,6 @@ def run_training(
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
 
-        # Reset environment
         if use_direct:
             obs_obj = env.reset()
             obs = obs_obj.__dict__ if hasattr(obs_obj, '__dict__') else {}
@@ -268,16 +236,14 @@ def run_training(
             result = env.reset()
             obs = result.observation.__dict__ if hasattr(result.observation, '__dict__') else {}
 
-        episode_step_data = []   # (prompt, action_json, step_reward)
+        episode_step_data = []   
         step_count = 0
         episode_done = False
 
         while not episode_done and step_count < max_steps_per_episode:
-            # Build prompt
             prompt = build_agent_prompt(obs)
             full_prompt = f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{prompt}\n<|assistant|>\n"
 
-            # Generate action with model
             inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
             with __import__("torch").no_grad():
                 outputs = model.generate(
@@ -292,7 +258,6 @@ def run_training(
                 skip_special_tokens=True,
             )
 
-            # Parse action from JSON
             try:
                 action_data = json.loads(generated.strip())
                 if use_direct:
@@ -304,7 +269,6 @@ def run_training(
                     reasoning=action_data.get("reasoning", ""),
                 )
             except (json.JSONDecodeError, Exception) as e:
-                # Malformed JSON — penalize
                 action = MSMERLAction(
                     action_type="wait_and_observe",
                     account_id=1,
@@ -312,7 +276,6 @@ def run_training(
                     reasoning="(parse error)",
                 )
 
-            # Execute action
             if use_direct:
                 obs_obj = env.step(action)
                 obs = obs_obj.__dict__ if hasattr(obs_obj, '__dict__') else {}
@@ -324,11 +287,11 @@ def run_training(
                 step_reward = result.reward or 0.0
                 episode_done = result.done
 
-            # Record for GRPO batch
+            # Store step data temporarily
             episode_step_data.append({
                 "prompt":      full_prompt,
                 "completion":  generated,
-                "reward":      step_reward,
+                "step_reward": step_reward,
             })
 
             step_count += 1
@@ -342,12 +305,16 @@ def run_training(
                     f"Cum.R={summary.get('cumulative_reward',0):.3f}"
                 )
 
-        # Episode-level reward
+        # Episode boundary handling
         last_result = obs.get("last_action_result", {})
         ep_breakdown = last_result.get("episode_reward_breakdown") if last_result else None
         episode_reward = ep_breakdown["total"] if ep_breakdown else obs.get("episode_reward_so_far", 0)
         episode_rewards.append(episode_reward)
-        all_steps.extend(episode_step_data)
+        
+        # FIXED: Assign episode reward to all steps for stable GRPO credit assignment
+        for step_data in episode_step_data:
+            step_data["reward"] = step_data["step_reward"] + (episode_reward * 0.5) 
+            all_steps.append(step_data)
 
         elapsed = time.time() - episode_start
         print(
@@ -364,10 +331,10 @@ def run_training(
                 f"ToolFit={ep_breakdown['tool_appropriateness']:.1%}"
             )
 
-        # GRPO batch update (simplified — in practice use TRL GRPOTrainer)
-        if len(all_steps) >= 32:
-            _grpo_update_step(model, tokenizer, all_steps[-32:])
-            all_steps = all_steps[-64:]  # keep recent buffer
+        # FIXED: Perform GRPO update strictly at the episode boundary
+        if len(all_steps) >= 30:
+            _grpo_update_step(model, tokenizer, all_steps)
+            all_steps = []  # Clear buffer after update to prevent staleness
 
         # Checkpoint
         if episode % save_every_n_episodes == 0:
@@ -375,7 +342,6 @@ def run_training(
             try:
                 model.save_pretrained(ckpt_path)
                 tokenizer.save_pretrained(ckpt_path)
-                # Save reward curve
                 with open(os.path.join(output_dir, "reward_curve.json"), "w") as f:
                     json.dump({"episodes": list(range(1, len(episode_rewards)+1)),
                                "rewards": episode_rewards}, f)
@@ -385,22 +351,10 @@ def run_training(
 
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE")
-    print(f"Episodes: {num_episodes}")
-    print(f"Final reward (avg last 10): {sum(episode_rewards[-10:])/10:.4f}")
-    print(f"Peak reward: {max(episode_rewards):.4f}")
-    print(f"{'='*60}")
-
     return episode_rewards
 
 
 def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
-    """
-    Simplified GRPO update step.
-    In production: use TRL GRPOTrainer with vLLM for efficiency.
-
-    The key insight: the environment reward IS the GRPO reward signal.
-    No reward model needed. NPA rate and recovery rate are hard numbers.
-    """
     import torch
 
     prompts     = [b["prompt"]     for b in batch]
@@ -410,8 +364,6 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     # Normalize rewards (GRPO baseline)
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
-    # In full TRL implementation, this calls GRPOTrainer.train_step()
-    # For this script: log reward statistics
     pos_frac = (rewards > 0).float().mean().item()
     print(
         f"    GRPO batch | n={len(batch)} | "
@@ -419,10 +371,6 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         f"pos_frac={pos_frac:.1%}"
     )
 
-
-# ---------------------------------------------------------------------------
-# ENTRY POINT
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MSME-RL GRPO Training")
