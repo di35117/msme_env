@@ -26,7 +26,7 @@ except Exception as e:
 try:
     from ..models import MSMERLAction, MSMERLObservation
     from .msmeEnv_environment import MSMERLEnvironment
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):  # <-- Added ImportError here
     from models import MSMERLAction, MSMERLObservation
     from server.msmeEnv_environment import MSMERLEnvironment
 
