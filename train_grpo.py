@@ -22,6 +22,11 @@ import os
 import time
 from typing import Any, Dict, List
 
+# Added imports for SFT Warm Start
+from datasets import Dataset
+from trl import SFTTrainer
+from transformers import TrainingArguments
+
 # ---------------------------------------------------------------------------
 # GRPO TRAINING PROMPT
 # ---------------------------------------------------------------------------
@@ -53,7 +58,7 @@ Startup signals of genuine distress (what contradicts the pitch):
 
 AVAILABLE ACTIONS (21 total):
 Communication: send_empathetic_reminder, send_firm_reminder, send_legal_notice_section13,
-               call_promoter_founder, call_guarantor_investor, conduct_cluster_ecosystem_visit
+                call_promoter_founder, call_guarantor_investor, conduct_cluster_ecosystem_visit
 
 Financial restructuring: grant_moratorium, restructure_emi, offer_eclgs_topup (MSME),
                           offer_bridge_loan_extension (startup), accept_partial_payment, waive_penal_interest
@@ -89,7 +94,7 @@ def build_agent_prompt(observation: Dict) -> str:
     semantic_mem = observation.get("semantic_memory_context", "")
     episodic_mem = observation.get("episodic_memory_context", "")
 
-    msme_accounts   = observation.get("msme_accounts", [])
+    msme_accounts    = observation.get("msme_accounts", [])
     startup_accounts = observation.get("startup_accounts", [])
     alerts           = observation.get("active_cluster_alerts", []) + observation.get("active_ecosystem_alerts", [])
 
@@ -133,6 +138,64 @@ Respond with JSON only:"""
 
 def grpo_reward_function(completions: List[str], ground_truth_rewards: List[float]) -> List[float]:
     return ground_truth_rewards
+
+
+# ---------------------------------------------------------------------------
+# SFT WARM START
+# ---------------------------------------------------------------------------
+
+def run_sft_warm_start(model, tokenizer, output_dir):
+    """
+    Expanded SFT Warm Start including systemic risk and cross-contamination cases.
+    Teaches the model 'Theory of Mind' for complex Indian business networks.
+    """
+    print("🚀 Initializing Enhanced SFT Warm Start (including Systemic Risk)...")
+    
+    sft_data = []
+
+    # --- CATEGORY 1: MSME CLUSTER CONTAGION (25 cases) ---
+    for i in range(1, 13):
+        sft_data.append({
+            "prompt": f"Account {i}: MSME (Auto Components). Signal: Major anchor OEM in the same cluster reported 30% production cut. Message: 'Operations are normal'.",
+            "completion": '{"reasoning": "Cluster stress detected. OEM cuts mean upcoming payment delays for this supplier. Understated message masks systemic cash flow risk.", "action_type": "offer_eclgs_topup", "account_id": ' + str(i) + '}'
+        })
+        sft_data.append({
+            "prompt": f"Account {i+12}: MSME (Pharma). Signal: Neighboring unit in the industrial estate went NPA yesterday. Message: 'We are slightly affected'.",
+            "completion": '{"reasoning": "Cross-contamination risk. Neighboring NPA often triggers bank-wide scrutiny and liquidity tightening in the cluster. Proactive intervention needed.", "action_type": "behavioral_signal_check", "account_id": ' + str(i+12) + '}'
+        })
+
+    # --- CATEGORY 2: STARTUP ECOSYSTEM SHOCKS (25 cases) ---
+    for i in range(21, 33):
+        sft_data.append({
+            "prompt": f"Account {i}: SaaS Startup. Signal: Lead VC just announced a pivot away from this sector. Message: 'Investor confidence is high'.",
+            "completion": '{"reasoning": "Ecosystem confidence shock. VC pivot indicates future funding rounds will fail. Overstated message masks upcoming runway crisis.", "action_type": "request_investor_update_meeting", "account_id": ' + str(i) + '}'
+        })
+        sft_data.append({
+            "prompt": f"Account {i+12}: EdTech Startup. Signal: Two senior developers left for a competitor. Message: 'Scaling the team'.",
+            "completion": '{"reasoning": "Ecosystem talent churn. Dev departure is a leading indicator of internal product failure or funding delays. Claim of scaling is a deceptive overstatement.", "action_type": "behavioral_signal_check", "account_id": ' + str(min(30, i+12)) + '}'
+        })
+
+    dataset = Dataset.from_list(sft_data)
+
+    trainer = SFTTrainer(
+        model=model,
+        train_dataset=dataset,
+        dataset_text_field="prompt",
+        max_seq_length=1024,
+        tokenizer=tokenizer,
+        args=TrainingArguments(
+            output_dir=os.path.join(output_dir, "sft_warmstart"),
+            per_device_train_batch_size=4,
+            num_train_epochs=5, # Slightly higher epochs to cement the contagion logic
+            learning_rate=2e-5,
+            logging_steps=5,
+            save_strategy="no",
+        ),
+    )
+
+    trainer.train()
+    print("✅ Enhanced SFT Warm Start complete. Model understands systemic risk.")
+    return trainer.model
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +252,9 @@ def run_training(
             device_map="auto",
         )
         print("✓ Loaded model with HF Transformers")
+
+    # Call SFT Warm Start before starting RL loop
+    model = run_sft_warm_start(model, tokenizer, output_dir)
 
     try:
         from msmeEnv import MSMERLEnv, MSMERLAction
@@ -355,9 +421,9 @@ def run_training(
 def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     import torch
 
-    prompts     = [b["prompt"]     for b in batch]
+    prompts      = [b["prompt"]     for b in batch]
     completions = [b["completion"] for b in batch]
-    rewards     = torch.tensor([b["reward"] for b in batch], dtype=torch.float32)
+    rewards      = torch.tensor([b["reward"] for b in batch], dtype=torch.float32)
 
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
