@@ -14,11 +14,12 @@ Step rewards: immediate feedback per action.
 Episode rewards: NPA rate + recovery rate + relationship score + tool appropriateness.
 """
 
+import random
 from typing import Any, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
-# STEP-LEVEL REWARD TABLE  (14 distinct outcome types)
+# STEP-LEVEL REWARD TABLE  (15 distinct outcome types)
 # ---------------------------------------------------------------------------
 
 STEP_REWARDS: Dict[str, float] = {
@@ -36,6 +37,7 @@ STEP_REWARDS: Dict[str, float] = {
     "cluster_cascade_default":                    -0.25,
     "ecosystem_cascade_ghosting":                 -0.20,
     "unnecessary_action_on_current_account":      -0.03,
+    "tool_execution_failed":                      -0.02, # FIXED: Penalty for tool failure
 
     # --- MSME-specific penalties ---
     "sarfaesi_before_restructuring_attempted":    -0.12,
@@ -152,6 +154,9 @@ def classify_action_outcome(
             return "payment_received_after_empathy"
 
         if action_type == "verify_gst_returns":
+            # FIXED: Inject stochastic tool failure (15% chance)
+            if random.random() < 0.15:
+                return "tool_execution_failed"
             if health > 0.4:
                 return "information_verified_genuine_stress"
             return "behavioral_signal_check_revealed_distress"
@@ -183,6 +188,9 @@ def classify_action_outcome(
             return "sarfaesi_used_on_startup"
 
         if action_type == "check_startup_ecosystem_signals":
+            # FIXED: Inject stochastic tool failure (15% chance)
+            if random.random() < 0.15:
+                return "tool_execution_failed"
             if runway <= 6:
                 return "behavioral_signal_check_revealed_distress"
             return "information_verified_genuine_stress"
@@ -230,6 +238,7 @@ def classify_action_outcome(
 def compute_episode_reward(
     hidden_profiles: Dict[int, Dict],
     episode_history: List[Dict],
+    episode_num: int, # FIXED: Added for curriculum phasing
     final_month: int = 36,
 ) -> Dict[str, float]:
     """
@@ -271,23 +280,38 @@ def compute_episode_reward(
     ]
     relationship_score = sum(trust_scores) / len(trust_scores) if trust_scores else 0.5
 
-    # Tool appropriateness
+    # FIXED: Prevent Goodharting Tool Appropriateness
     appropriate_actions = 0
+    action_frequency = {}
+    
     total_actions = max(1, len(episode_history))
     for step in episode_history:
         action_type  = step.get("action_type", "")
         account_type = step.get("account_type", "")
+        
+        # Track frequency to penalize spamming
+        action_frequency[action_type] = action_frequency.get(action_type, 0) + 1
+        
         if _is_appropriate_tool(action_type, account_type):
-            appropriate_actions += 1
-    tool_appropriateness = appropriate_actions / total_actions
+            if action_frequency[action_type] <= 3: # Cap rewards for the same action
+                appropriate_actions += 1
+            else:
+                appropriate_actions -= 0.5 # Actively penalize spamming the same tool
 
-    # Composite reward
-    R = (
-        0.40 * (1.0 - npa_rate)          +
-        0.30 * recovery_rate              +
-        0.20 * relationship_score         +
-        0.10 * tool_appropriateness
-    )
+    tool_appropriateness = max(0.0, appropriate_actions / total_actions)
+
+    # FIXED: Binary reward curriculum for early episodes to prevent signal oscillation
+    if episode_num < 30:
+        # Phase 1: Pure survival. 1.0 if NPA rate is 0, else heavily penalize.
+        R = 1.0 if npa_rate == 0 else (0.1 - npa_rate)
+    else:
+        # Phase 2: Complex shaping
+        R = (
+            0.40 * (1.0 - npa_rate)          +
+            0.30 * recovery_rate              +
+            0.20 * relationship_score         +
+            0.10 * tool_appropriateness
+        )
 
     return {
         "total":                round(R, 4),
