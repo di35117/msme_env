@@ -15,17 +15,13 @@ description = "Msmeenv environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
-    # install from github
-    # "openenv-core[core] @ git+https://github.com/meta-pytorch/OpenEnv.git",
     "openenv-core[core]>=0.2.2",
-    # Environment-specific dependencies
-    # Add all dependencies needed for your environment here
-    # Examples:
-    # "numpy>=1.19.0",
-    # "torch>=2.0.0",
-    # "gymnasium>=0.29.0",
-    # "openspiel>=1.0.0",
-    # "smolagents>=1.22.0,<2",
+    
+    # Environment-specific dependencies for MSME-RL
+    "fastapi>=0.115.0",
+    "uvicorn>=0.24.0",
+    "matplotlib>=3.7.0",
+    "pydantic>=2.0.0"
 ]
 
 [project.optional-dependencies]
@@ -36,8 +32,7 @@ dev = [
 
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
-# or: python -m msmeEnv.server.app
-server = "msmeEnv.server.app:main"
+server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
