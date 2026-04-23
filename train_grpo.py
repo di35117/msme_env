@@ -1,5 +1,3 @@
-# train_grpo.py
-
 """
 MSME-RL Training Script — GRPO with Qwen3-1.7B
 
@@ -87,17 +85,14 @@ Respond with your action in this exact JSON format:
 
 
 def build_agent_prompt(observation: Dict) -> str:
-    """Build the full prompt for the agent given current observation."""
     working_mem = observation.get("working_memory", "")
     semantic_mem = observation.get("semantic_memory_context", "")
     episodic_mem = observation.get("episodic_memory_context", "")
 
-    # Find the highest-priority account to act on
     msme_accounts   = observation.get("msme_accounts", [])
     startup_accounts = observation.get("startup_accounts", [])
     alerts           = observation.get("active_cluster_alerts", []) + observation.get("active_ecosystem_alerts", [])
 
-    # Format the most urgent accounts (top 5 by DPD)
     urgent = sorted(
         msme_accounts + startup_accounts,
         key=lambda x: x.get("dpd", 0),
@@ -136,15 +131,7 @@ Respond with JSON only:"""
     return prompt
 
 
-# ---------------------------------------------------------------------------
-# GRPO REWARD FUNCTION WRAPPER
-# ---------------------------------------------------------------------------
-
 def grpo_reward_function(completions: List[str], ground_truth_rewards: List[float]) -> List[float]:
-    """
-    GRPO reward function for TRL.
-    The environment's step reward IS the ground truth — no LLM judge needed.
-    """
     return ground_truth_rewards
 
 
@@ -168,7 +155,6 @@ def run_training(
     print(f"Environment: http://localhost:{port}")
     print(f"{'='*60}\n")
 
-    # --- 1. Load model and tokenizer ---
     if use_unsloth:
         try:
             from unsloth import FastLanguageModel
@@ -204,7 +190,6 @@ def run_training(
         )
         print("✓ Loaded model with HF Transformers")
 
-    # --- 2. Connect to environment ---
     try:
         from msmeEnv import MSMERLEnv, MSMERLAction
         env = MSMERLEnv(base_url=f"http://localhost:{port}")
@@ -219,7 +204,6 @@ def run_training(
     else:
         use_direct = False
 
-    # --- 3. Training loop ---
     episode_rewards = []
     all_steps = []
 
@@ -287,7 +271,6 @@ def run_training(
                 step_reward = result.reward or 0.0
                 episode_done = result.done
 
-            # Store step data temporarily
             episode_step_data.append({
                 "prompt":      full_prompt,
                 "completion":  generated,
@@ -305,13 +288,11 @@ def run_training(
                     f"Cum.R={summary.get('cumulative_reward',0):.3f}"
                 )
 
-        # Episode boundary handling
         last_result = obs.get("last_action_result", {})
         ep_breakdown = last_result.get("episode_reward_breakdown") if last_result else None
         episode_reward = ep_breakdown["total"] if ep_breakdown else obs.get("episode_reward_so_far", 0)
         episode_rewards.append(episode_reward)
         
-        # FIXED: Assign episode reward to all steps for stable GRPO credit assignment
         for step_data in episode_step_data:
             step_data["reward"] = step_data["step_reward"] + (episode_reward * 0.5) 
             all_steps.append(step_data)
@@ -331,21 +312,38 @@ def run_training(
                 f"ToolFit={ep_breakdown['tool_appropriateness']:.1%}"
             )
 
-        # FIXED: Perform GRPO update strictly at the episode boundary
         if len(all_steps) >= 30:
             _grpo_update_step(model, tokenizer, all_steps)
-            all_steps = []  # Clear buffer after update to prevent staleness
+            all_steps = []  
 
-        # Checkpoint
+        # -----------------------------------------------------------------------
+        # CHECKPOINTING & LIVE MATPLOTLIB PLOTTING
+        # -----------------------------------------------------------------------
         if episode % save_every_n_episodes == 0:
             ckpt_path = os.path.join(output_dir, f"episode_{episode:04d}")
             try:
                 model.save_pretrained(ckpt_path)
                 tokenizer.save_pretrained(ckpt_path)
+                
                 with open(os.path.join(output_dir, "reward_curve.json"), "w") as f:
                     json.dump({"episodes": list(range(1, len(episode_rewards)+1)),
                                "rewards": episode_rewards}, f)
-                print(f"  💾 Checkpoint saved: {ckpt_path}")
+                
+                import matplotlib.pyplot as plt
+                
+                plt.figure(figsize=(10, 5))
+                plt.plot(list(range(1, len(episode_rewards)+1)), episode_rewards, color='#1f77b4', linewidth=2)
+                plt.title("MSME-RL: Episode Reward over Training", fontsize=14)
+                plt.xlabel("Episodes", fontsize=12)
+                plt.ylabel("Cumulative Reward (Recovery + Trust - NPA)", fontsize=12)
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                
+                plot_path = os.path.join(output_dir, "reward_curve.png")
+                plt.savefig(plot_path, dpi=300)
+                plt.close() 
+                
+                print(f"  💾 Checkpoint & Plot saved: {ckpt_path}")
             except Exception as e:
                 print(f"  ⚠ Checkpoint failed: {e}")
 
@@ -361,7 +359,6 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     completions = [b["completion"] for b in batch]
     rewards     = torch.tensor([b["reward"] for b in batch], dtype=torch.float32)
 
-    # Normalize rewards (GRPO baseline)
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
     pos_frac = (rewards > 0).float().mean().item()
