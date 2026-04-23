@@ -65,7 +65,7 @@ except ImportError:
     from message_generator import generate_rm_message
 
 # Max actions per episode before environment auto-advances to avoid infinite loops
-MAX_STEPS_PER_EPISODE = 36 * 30  # 36 months × 30 accounts
+MAX_STEPS_PER_EPISODE = 36 * 30  
 
 
 class MSMERLEnvironment(Environment):
@@ -128,8 +128,11 @@ class MSMERLEnvironment(Environment):
         self._hidden_profiles = self._portfolio["hidden_profiles"]
         self._observable_states = self._portfolio["observable_states"]
 
-        # Reset episode state
-        self._current_month = 1
+        # FIXED: Horizon Curriculum. Start near crisis (Month 34) and walk back to Month 1
+        # as episodes increment to prevent sparse reward wandering.
+        start_month = max(1, 34 - (self._episode_num // 5) * 4)
+        
+        self._current_month = start_month
         self._episode_history = []
         self._active_cluster_alerts = []
         self._active_ecosystem_alerts = []
@@ -138,7 +141,7 @@ class MSMERLEnvironment(Environment):
 
         # Build initial working memory
         working_mem = self._memory.working.refresh(
-            month=1,
+            month=self._current_month,
             episode=self._episode_num,
             hidden_profiles=self._hidden_profiles,
             observable_states=self._observable_states,
@@ -149,7 +152,7 @@ class MSMERLEnvironment(Environment):
 
         return MSMERLObservation(
             episode=self._episode_num,
-            month=1,
+            month=self._current_month,
             msme_accounts=self._get_msme_observables(),
             startup_accounts=self._get_startup_observables(),
             portfolio_summary=self._build_portfolio_summary(),
@@ -192,12 +195,6 @@ class MSMERLEnvironment(Environment):
           6. Updates memory (episodic + semantic)
           7. Advances month if all accounts have been acted on
           8. Returns new observation with memory context injected
-
-        Args:
-            action: MSMERLAction with action_type, account_id, parameters, reasoning
-
-        Returns:
-            MSMERLObservation with updated portfolio state + memory context
         """
         self._state.step_count += 1
         self._step_count_this_episode += 1
@@ -359,6 +356,7 @@ class MSMERLEnvironment(Environment):
             episode_reward_breakdown = compute_episode_reward(
                 self._hidden_profiles,
                 self._episode_history,
+                episode_num=self._episode_num,
                 final_month=36,
             )
             self._all_episode_histories.append(self._episode_history)
