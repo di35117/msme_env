@@ -45,7 +45,7 @@ try:
     )
     from ..memory import MemoryManager
     from ..message_generator import generate_rm_message
-except ImportError:
+except (ModuleNotFoundError, ImportError):  # FIXED: Catching both error types safely
     from models import MSMERLAction, MSMERLObservation
     from world_generator import generate_portfolio, build_msme_observable, build_startup_observable
     from network import (
