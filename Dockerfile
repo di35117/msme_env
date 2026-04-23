@@ -4,12 +4,6 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-# Multi-stage build using openenv-base
-# This Dockerfile is flexible and works for both:
-# - In-repo environments (with local OpenEnv sources)
-# - Standalone environments (with openenv from PyPI/Git)
-# The build script (openenv build) handles context detection and sets appropriate build args.
-
 ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
@@ -20,15 +14,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# Build argument to control whether we're building standalone or in-repo
-ARG BUILD_MODE=in-repo
-ARG ENV_NAME=msmeEnv
-
-# Copy environment code (always at root of build context)
+# Copy environment code (from the root build context)
 COPY . /app/env
-
-# For in-repo builds, openenv is already vendored in the build context
-# For standalone builds, openenv will be installed via pyproject.toml
 WORKDIR /app/env
 
 # Ensure uv is available (for local builds where base image lacks it)
@@ -39,7 +26,6 @@ RUN if ! command -v uv >/dev/null 2>&1; then \
     fi
     
 # Install dependencies using uv sync
-# If uv.lock exists, use it; otherwise resolve on the fly
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -f uv.lock ]; then \
         uv sync --frozen --no-install-project --no-editable; \
@@ -68,13 +54,13 @@ COPY --from=builder /app/env /app/env
 # Set PATH to use the virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Set PYTHONPATH so imports work correctly
+# Set PYTHONPATH so absolute imports work correctly across the project
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
 
-# Health check
+# Health check (matches the OpenEnv /health endpoint specification)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the FastAPI server
-# The module path is constructed to work with the /app/env structure
+# Hugging Face Spaces requires running on port 8000
+# Execute the FastAPI server defined in server/app.py
 CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
