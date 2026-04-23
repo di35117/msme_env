@@ -1,16 +1,19 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+"""
+MSME-RL Environment.
 
-"""Msmeenv Environment."""
+A mixed portfolio of 20 MSME + 10 startup accounts across a 36-month loan cycle.
+Teaches a 1.7B LM to decode two opposite linguistic strategies from reward signal alone:
+  - MSME owners who UNDERSTATE problems (Hindi/Hinglish/Marathi)
+  - Startup founders who OVERSTATE health (pitch-deck English)
 
-from .client import MsmeenvEnv
-from .models import MsmeenvAction, MsmeenvObservation
+Calibrated to: RBI FY24, NASSCOM/CIBIL 2023, SIDBI MSME Pulse, IBA 2023.
+"""
+
+from .client import MSMERLEnv
+from .models import MSMERLAction, MSMERLObservation
 
 __all__ = [
-    "MsmeenvAction",
-    "MsmeenvObservation",
-    "MsmeenvEnv",
+    "MSMERLAction",
+    "MSMERLObservation",
+    "MSMERLEnv",
 ]
