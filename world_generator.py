@@ -37,6 +37,7 @@ NPA_RATES = {
     "seed":            0.14,
     "series_a":        0.08,
     "series_b":        0.05,
+    "edtech":          0.15,   # Added for SFT alignment
 }
 
 MSME_CLUSTER_CONTAGION_FACTOR = 2.3  # SIDBI MSME Pulse: 1 default → 2.3 connected defaults
@@ -89,7 +90,7 @@ MSME_BUSINESSES = [
 # ---------------------------------------------------------------------------
 
 STARTUP_STAGES  = ["pre_seed", "seed", "series_a", "series_b"]
-STARTUP_SECTORS = ["b2b_saas", "fintech", "d2c", "deeptech"]
+STARTUP_SECTORS = ["b2b_saas", "fintech", "d2c", "deeptech", "edtech"]
 
 STARTUP_COMPANIES = [
     ("FinStack Technologies Pvt Ltd",   "Arjun Mehta",     "b2b_saas",   "series_a"),
@@ -127,16 +128,25 @@ def generate_msme_profile(
     episode: int,
     cluster_id: int,
     cluster_members: List[int],
-    difficulty: float, # FIXED: RLVE curriculum difficulty injected
+    difficulty: float,
 ) -> Dict[str, Any]:
     """
-    Generate a hidden MSME profile.  Agent NEVER sees this directly.
+    Generate a hidden MSME profile aligned with SFT anchor scenarios.
     """
     idx = (account_id - 1) % len(MSME_BUSINESSES)
     business_name, promoter = MSME_BUSINESSES[idx]
-    industry = MSME_INDUSTRIES[(account_id + episode) % len(MSME_INDUSTRIES)]
+    
+    # ALIGNMENT: Explicitly assign industries and centralities based on SFT data
+    if account_id <= 6:
+        industry = "auto_ancillary"
+        cluster_centrality = 0.90 if account_id == 1 else 0.1 + _rng_seed(episode, account_id, "clust") * 0.3
+    elif account_id <= 12:
+        industry = "textile"
+        cluster_centrality = 0.85 if account_id == 7 else 0.1 + _rng_seed(episode, account_id, "clust") * 0.2
+    else:
+        industry = "pharma"
+        cluster_centrality = 0.90 if account_id == 13 else 0.1 + _rng_seed(episode, account_id, "clust") * 0.3
 
-    # FIXED: Adaptive difficulty. Push to extremes when difficulty is low.
     if difficulty < 0.4:
         base_health = 0.85 if _rng_seed(episode, account_id, "h") > 0.5 else 0.15
         trajectory = "stable"
@@ -148,9 +158,6 @@ def generate_msme_profile(
             base_health = max(0.15, base_health - 0.20)
         strategic_default = _rng_seed(episode, account_id, "strat") < (0.12 * difficulty)
 
-    cluster_centrality = _rng_seed(episode, account_id, "clust")
-
-    # Crisis: calibrated to industry NPA rates
     npa_rate = NPA_RATES.get(industry, 0.09)
     crisis_month = None
     if _rng_seed(episode, account_id, "crisis") < npa_rate * 3:
@@ -167,35 +174,25 @@ def generate_msme_profile(
         "business_name": business_name,
         "promoter": promoter,
         "industry": industry,
-
-        # HIDDEN — agent never sees
         "true_financial_health": round(base_health, 3),
         "health_trajectory": trajectory,
         "strategic_default_propensity": round(strategic_default * 0.8, 3),
         "crisis_trigger_month": crisis_month,
-
-        # Trust and network
         "trust_score": round(0.5 + _rng_seed(episode, account_id, "trust") * 0.3, 3),
         "response_to_pressure": round(_rng_seed(episode, account_id, "press"), 3),
         "response_to_empathy": round(0.4 + _rng_seed(episode, account_id, "emph") * 0.5, 3),
         "cluster_id": cluster_id,
         "cluster_centrality": round(cluster_centrality, 3),
         "cluster_members": cluster_members,
-
-        # Communication
         "communication_language": language,
         "excuse_style": excuse_style,
-        "understates_distress": True,   # ALL MSME accounts understate
-
-        # Loan details
+        "understates_distress": True,
         "loan_amount": loan_amount,
         "emi_amount": int(loan_amount * 0.033),
         "outstanding_principal": int(loan_amount * (0.5 + _rng_seed(episode, account_id, "princ") * 0.4)),
         "collateral_type": MSME_COLLATERAL[account_id % len(MSME_COLLATERAL)],
         "guarantor_strength": round(0.4 + _rng_seed(episode, account_id, "guar") * 0.5, 3),
         "months_since_origination": int(1 + _rng_seed(episode, account_id, "orig") * 20),
-
-        # Payment history (last 5 months)
         "payment_history": _generate_msme_payment_history(base_health, strategic_default, episode, account_id),
     }
 
@@ -204,15 +201,22 @@ def generate_startup_profile(
     account_id: int,
     episode: int,
     ecosystem_network: List[int],
-    difficulty: float, # FIXED
+    difficulty: float,
 ) -> Dict[str, Any]:
     """
-    Generate a hidden startup profile.  Agent NEVER sees true runway.
+    Generate a hidden startup profile aligned with SFT ecosystem scenarios.
     """
     idx = (account_id - 21) % len(STARTUP_COMPANIES)
-    company, founder, sector, stage = STARTUP_COMPANIES[idx]
+    company, founder, _, _ = STARTUP_COMPANIES[idx]
 
-    # FIXED: Adaptive difficulty for runway
+    # ALIGNMENT: Match SFT domains explicitly 
+    if account_id <= 25:
+        sector = "b2b_saas"
+        stage = "seed"
+    else:
+        sector = "edtech"
+        stage = "series_a"
+
     if difficulty < 0.4:
         true_runway = 20 if _rng_seed(episode, account_id, "r") > 0.5 else 2
     else:
@@ -246,37 +250,26 @@ def generate_startup_profile(
         "founder": founder,
         "stage": stage,
         "sector": sector,
-
-        # HIDDEN — agent never sees
         "true_runway_months": true_runway,
         "founder_optimism_bias": round(founder_optimism_bias, 3),
         "investor_bridge_probability": round(0.2 + _rng_seed(episode, account_id, "bridge") * 0.6, 3),
         "pivot_risk": round(_rng_seed(episode, account_id, "pivot"), 3),
         "crisis_trigger_month": crisis_trigger_month,
-
-        # Trust and network
         "trust_score": round(0.5 + _rng_seed(episode, account_id, "strust") * 0.3, 3),
         "ghosting_propensity": round(STARTUP_GHOSTING_BASE + _rng_seed(episode, account_id, "ghost") * 0.3, 3),
         "ecosystem_centrality": round(_rng_seed(episode, account_id, "ecos"), 3),
         "ecosystem_network": ecosystem_network,
-
-        # Communication
         "communication_style": "pitch_english",
-        "overstates_health": True,   # ALL startup accounts overstate
-
-        # Financials
+        "overstates_health": True,
         "burn_rate_monthly": burn_rate,
         "mrr": mrr_base,
         "mrr_growth_last_3m": mrr_growth,
         "investor_backing": investor,
-
-        # Loan
         "loan_amount": loan_amount,
         "emi_amount": int(loan_amount * 0.028),
         "outstanding_principal": int(loan_amount * (0.5 + _rng_seed(episode, account_id, "sprinc") * 0.4)),
         "collateral_type": "none_clean",
         "months_since_origination": int(1 + _rng_seed(episode, account_id, "sorig") * 14),
-
         "payment_history": _generate_startup_payment_history(true_runway, episode, account_id),
     }
 
@@ -287,7 +280,6 @@ def _generate_msme_payment_history(
     episode: int,
     account_id: int,
 ) -> List[str]:
-    """Realistic MSME payment history based on true health (hidden)."""
     history = []
     for i in range(5):
         r = _rng_seed(episode, account_id, f"ph{i}")
@@ -309,7 +301,6 @@ def _generate_startup_payment_history(
     episode: int,
     account_id: int,
 ) -> List[str]:
-    """Startup payment history — good until runway runs short."""
     history = []
     for i in range(5):
         r = _rng_seed(episode, account_id, f"sph{i}")
@@ -329,28 +320,27 @@ def _generate_startup_payment_history(
 def assign_msme_clusters(account_ids: List[int]) -> Dict[int, Tuple[int, List[int]]]:
     """
     Group MSME accounts into geographic industry clusters.
-    Returns {account_id: (cluster_id, connected_accounts)}.
-    Calibrated: 1 default → avg 2.3 connected defaults (SIDBI).
+    ALIGNED: Groups directly match the SFT sector brackets.
     """
-    # Create 4 clusters of 5 accounts each
     clusters = {}
-    shuffled = account_ids[:]
-    for cluster_id, chunk in enumerate(
-        [shuffled[i:i+5] for i in range(0, len(shuffled), 5)]
-    ):
+    
+    # 1. Auto Ancillary Cluster (1-6)
+    c1 = [acc for acc in account_ids if acc <= 6]
+    # 2. Textile Cluster (7-12)
+    c2 = [acc for acc in account_ids if 7 <= acc <= 12]
+    # 3. Pharma Cluster (13-20)
+    c3 = [acc for acc in account_ids if acc >= 13]
+
+    for cluster_id, chunk in enumerate([c1, c2, c3]):
         for acc_id in chunk:
             clusters[acc_id] = (cluster_id, [x for x in chunk if x != acc_id])
+            
     return clusters
 
 
 def assign_startup_ecosystem(account_ids: List[int]) -> Dict[int, List[int]]:
-    """
-    Group startup accounts into loose ecosystem networks.
-    Returns {account_id: connected_startup_accounts}.
-    """
     ecosystem = {}
     for acc_id in account_ids:
-        # Each startup connected to 2-3 others in the portfolio
         connected = [x for x in account_ids if x != acc_id]
         ecosystem[acc_id] = connected[:3]
     return ecosystem
@@ -361,11 +351,6 @@ def assign_startup_ecosystem(account_ids: List[int]) -> Dict[int, List[int]]:
 # ---------------------------------------------------------------------------
 
 def generate_portfolio(episode: int) -> Dict[str, Any]:
-    """
-    Generate a full episode portfolio: 20 MSME + 10 startup accounts.
-    Returns both hidden profiles (for simulation) and observable signals (for agent).
-    """
-    # FIXED: Calculate RLVE difficulty based on episode count
     difficulty = min(1.0, episode / 50.0)
 
     msme_ids   = list(range(1, 21))
@@ -377,14 +362,12 @@ def generate_portfolio(episode: int) -> Dict[str, Any]:
     hidden_profiles: Dict[int, Dict] = {}
     observable_states: Dict[int, Dict] = {}
 
-    # Generate MSME accounts
     for acc_id in msme_ids:
         cluster_id, cluster_members = msme_clusters[acc_id]
         profile = generate_msme_profile(acc_id, episode, cluster_id, cluster_members, difficulty)
         hidden_profiles[acc_id] = profile
         observable_states[acc_id] = build_msme_observable(profile)
 
-    # Generate startup accounts
     for acc_id in startup_ids:
         ecosystem = startup_ecosystem[acc_id]
         profile = generate_startup_profile(acc_id, episode, ecosystem, difficulty)
@@ -439,11 +422,9 @@ _STARTUP_MESSAGES = [
 
 
 def build_msme_observable(profile: Dict) -> Dict:
-    """Build observable signals for an MSME account (no hidden fields exposed)."""
     health = profile["true_financial_health"]
     payment_history = profile["payment_history"]
 
-    # DPD based on payment history
     last_payment = payment_history[-1] if payment_history else "on_time"
     if last_payment == "on_time":
         dpd = 0
@@ -453,7 +434,6 @@ def build_msme_observable(profile: Dict) -> Dict:
         except (ValueError, IndexError):
             dpd = 0
 
-    # GST filing status — degrades with health
     if health > 0.65:
         gst_status = "filed_on_time"
     elif health > 0.45:
@@ -463,7 +443,6 @@ def build_msme_observable(profile: Dict) -> Dict:
     else:
         gst_status = "not_filed_last_month"
 
-    # Cash flow trend
     if health > 0.6:
         cf_trend = "stable"
     elif health > 0.4:
@@ -473,7 +452,6 @@ def build_msme_observable(profile: Dict) -> Dict:
     else:
         cf_trend = "declining_30pct"
 
-    # Call response — genuinely distressed pick up; strategic defaulters avoid
     strat = profile.get("strategic_default_propensity", 0)
     if strat > 0.5:
         call_response = "not_answering"
@@ -484,19 +462,16 @@ def build_msme_observable(profile: Dict) -> Dict:
     else:
         call_response = "answered_immediately"
 
-    # Guarantor reachability
     guar = profile.get("guarantor_strength", 0.5)
     guarantor_status = "contactable" if guar > 0.4 else "unreachable"
 
-    # Pick language-appropriate message
     lang = profile.get("communication_language", "hindi")
     messages = _MSME_MESSAGES.get(lang, _MSME_MESSAGES["english"])
     msg_idx = profile["account_id"] % len(messages)
     last_message = messages[msg_idx]
 
-    # Industry stress
     industry = profile["industry"]
-    industry_stress = NPA_RATES.get(industry, 0.09) * 8  # scale to 0-1
+    industry_stress = NPA_RATES.get(industry, 0.09) * 8
 
     cluster_members = profile.get("cluster_members", [])
     cluster_late_count = max(0, int(len(cluster_members) * (1 - health)))
@@ -522,16 +497,13 @@ def build_msme_observable(profile: Dict) -> Dict:
         "last_physical_visit": f"month_{max(1, profile['months_since_origination'] - 6)}",
         "collateral_type": profile["collateral_type"],
         "loan_amount": profile["loan_amount"],
-        # NOTE: true_financial_health intentionally excluded
     }
 
 
 def build_startup_observable(profile: Dict) -> Dict:
-    """Build observable signals for a startup account (no hidden runway exposed)."""
     runway = profile["true_runway_months"]
     optimism_bias = profile.get("founder_optimism_bias", 0.75)
 
-    # DPD
     payment_history = profile["payment_history"]
     last_payment = payment_history[-1] if payment_history else "on_time"
     if last_payment == "on_time":
@@ -542,7 +514,6 @@ def build_startup_observable(profile: Dict) -> Dict:
         except (ValueError, IndexError):
             dpd = 0
 
-    # Behavioral signals contradict the optimistic message when runway is low
     if runway <= 4:
         linkedin_hiring    = "none_in_90_days"
         github_commits     = "declining_40pct"
@@ -580,11 +551,9 @@ def build_startup_observable(profile: Dict) -> Dict:
             profile["mrr"],
         ]
 
-    # Always optimistic founder message (this is the decoding challenge)
     msg_idx = profile["account_id"] % len(_STARTUP_MESSAGES)
     last_message = _STARTUP_MESSAGES[msg_idx]
 
-    # Cofounder job-hunting signal
     cofounder_signal = (
         "one_cofounder_job_hunting"
         if runway <= 5 and profile.get("ghosting_propensity", 0) > 0.3
@@ -604,7 +573,7 @@ def build_startup_observable(profile: Dict) -> Dict:
         "dpd": dpd,
         "emi_amount": profile["emi_amount"],
         "outstanding_principal": profile["outstanding_principal"],
-        "last_message": last_message,           # Always optimistic — key challenge
+        "last_message": last_message,
         "call_response": call_response,
         "mrr_last_3_months": mrr_trend,
         "linkedin_hiring_posts": linkedin_hiring,
@@ -617,5 +586,4 @@ def build_startup_observable(profile: Dict) -> Dict:
         "ecosystem_accounts_behavior": f"{ecosystem_defaults}_portfolio_company_defaulted",
         "investor_backing": profile["investor_backing"],
         "loan_amount": profile["loan_amount"],
-        # NOTE: true_runway_months intentionally excluded
     }
