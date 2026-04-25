@@ -21,7 +21,8 @@ Calibrated to published data:
   - IBA study 2023 (moratorium vs SARFAESI recovery rates)
 """
 
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
@@ -194,6 +195,7 @@ class MSMERLEnvironment(Environment):
         account_id   = action.account_id
         action_type  = action.action_type
         params       = action.parameters
+        step_started_at = time.perf_counter()
 
         # Validate account
         if account_id not in self._hidden_profiles:
@@ -201,9 +203,21 @@ class MSMERLEnvironment(Environment):
                 f"Invalid account_id {account_id}. Valid: 1-30."
             )
 
+        # Validate action type explicitly to prevent bypasses in direct mode.
+        valid_actions = set(self._domain_adapter.valid_actions or [])
+        if action_type not in valid_actions:
+            return self._error_observation(
+                f"Invalid action_type '{action_type}'. Must be one of configured domain actions."
+            )
+
         hidden_profile = self._hidden_profiles[account_id]
         account_type   = hidden_profile.get("account_type", "msme")
         observable     = self._observable_states[account_id]
+
+        # Validate action parameters with strict schema/range checks.
+        params_error = self._validate_action_parameters(action_type, account_type, params)
+        if params_error:
+            return self._error_observation(params_error)
 
         # 1. Classify outcome using hidden state
         outcome = self._domain_adapter.classify_outcome(
@@ -221,6 +235,9 @@ class MSMERLEnvironment(Environment):
             outcome=outcome,
             hidden_profile=hidden_profile,
         )
+        guardrail_penalty, guardrail_flags = self._compute_behavior_penalties(account_id, action_type)
+        budget_penalty = self._compute_budget_penalty(action.reasoning)
+        step_reward = round(step_reward - guardrail_penalty - budget_penalty, 4)
 
         # 3. Endogenous trust update — agent actions change repayment probability
         trust_delta = self._apply_trust_update(
@@ -294,6 +311,9 @@ class MSMERLEnvironment(Environment):
             "trust_delta": trust_delta,
             "rm_message": rm_message,
             "reasoning": action.reasoning,
+            "guardrail_penalty": guardrail_penalty,
+            "budget_penalty": budget_penalty,
+            "guardrail_flags": guardrail_flags,
         }
         self._episode_history.append(step_record)
         self._episode_cumulative_reward += step_reward
@@ -380,6 +400,9 @@ class MSMERLEnvironment(Environment):
                 "ecosystem_effects": bool(ecosystem_effects),
                 "cross_contamination": cross_contamination,
                 "episode_reward_breakdown": episode_reward_breakdown,
+                "guardrail_penalty": guardrail_penalty,
+                "budget_penalty": budget_penalty,
+                "guardrail_flags": guardrail_flags,
             },
             active_cluster_alerts=self._active_cluster_alerts,
             active_ecosystem_alerts=self._active_ecosystem_alerts,
@@ -395,6 +418,7 @@ class MSMERLEnvironment(Environment):
                 "episode_history_length": len(self._episode_history),
                 "semantic_patterns_known": self._memory.semantic.pattern_count,
                 "episodic_records_total": self._memory.episodic.total_records,
+                "step_latency_ms": round((time.perf_counter() - step_started_at) * 1000, 2),
             },
         )
 
@@ -574,6 +598,18 @@ class MSMERLEnvironment(Environment):
 
     def _error_observation(self, message: str) -> MSMERLObservation:
         """Return an error observation (invalid action)."""
+        # Use explicit format_error tag so reward logic can track malformed/invalid policy outputs.
+        self._episode_history.append({
+            "episode": self._episode_num,
+            "month": self._current_month,
+            "account_id": -1,
+            "account_type": "unknown",
+            "action_type": "format_error",
+            "outcome": "malformed_json_format",
+            "reward": -0.15,
+            "reasoning": f"error:{message}",
+        })
+        self._episode_cumulative_reward += -0.15
         return MSMERLObservation(
             episode=self._episode_num,
             month=self._current_month,
@@ -581,8 +617,95 @@ class MSMERLEnvironment(Environment):
             startup_accounts=self._get_startup_observables(),
             portfolio_summary=self._build_portfolio_summary(),
             working_memory=f"ERROR: {message}",
-            step_reward=-0.01,
+            step_reward=-0.15,
             done=False,
-            reward=-0.01,
+            reward=-0.15,
             metadata={"error": message},
         )
+
+    def _validate_action_parameters(
+        self,
+        action_type: str,
+        account_type: str,
+        params: Dict[str, Any],
+    ) -> Optional[str]:
+        """Strict parameter schema/range validation per action."""
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return "Invalid parameters: must be a JSON object."
+
+        allowed_by_action: Dict[str, set[str]] = {
+            "grant_moratorium": {"months"},
+            "offer_bridge_loan_extension": {"months"},
+            "restructure_emi": {"new_amount"},
+            "accept_partial_payment": {"amount"},
+            "offer_one_time_settlement": {"amount"},
+        }
+        allowed = allowed_by_action.get(action_type, set())
+        unknown_keys = set(params.keys()) - allowed
+        if unknown_keys:
+            return f"Invalid parameters for {action_type}: unexpected keys {sorted(list(unknown_keys))}."
+
+        if action_type in ("grant_moratorium", "offer_bridge_loan_extension"):
+            months = params.get("months")
+            if months is not None:
+                if not isinstance(months, int) or months < 1 or months > 6:
+                    return f"Invalid months for {action_type}: expected integer in [1, 6]."
+
+        if action_type == "grant_moratorium" and account_type == "startup":
+            months = params.get("months")
+            if months is not None and months > 3:
+                return "Invalid months for startup moratorium: expected <= 3."
+
+        if action_type == "restructure_emi":
+            new_amount = params.get("new_amount")
+            if new_amount is not None:
+                if not isinstance(new_amount, (int, float)) or new_amount < 1000 or new_amount > 2_000_000:
+                    return "Invalid new_amount for restructure_emi: expected numeric in [1000, 2000000]."
+
+        if action_type in ("accept_partial_payment", "offer_one_time_settlement"):
+            amount = params.get("amount")
+            if amount is not None:
+                if not isinstance(amount, (int, float)) or amount <= 0:
+                    return f"Invalid amount for {action_type}: expected positive numeric value."
+
+        return None
+
+    def _compute_behavior_penalties(self, account_id: int, action_type: str) -> Tuple[float, List[str]]:
+        """
+        Penalize repeated action abuse patterns:
+        - same action repeatedly on same account in same month
+        - excessive consecutive actions on same account (account hammering)
+        """
+        flags: List[str] = []
+        penalty = 0.0
+        same_month_steps = [s for s in self._episode_history if s.get("month") == self._current_month]
+        same_account_steps = [s for s in same_month_steps if s.get("account_id") == account_id]
+        same_action_same_account = [
+            s for s in same_account_steps if s.get("action_type") == action_type
+        ]
+
+        if len(same_action_same_account) >= 2:
+            penalty += 0.04
+            flags.append("repeat_action_same_account")
+
+        recent = same_month_steps[-6:]
+        if len([s for s in recent if s.get("account_id") == account_id]) >= 4:
+            penalty += 0.03
+            flags.append("account_hammering")
+
+        return round(penalty, 4), flags
+
+    @staticmethod
+    def _compute_budget_penalty(reasoning: str) -> float:
+        """
+        Penalize excessively long reasoning payloads (token/runtime budget proxy).
+        """
+        if not reasoning:
+            return 0.0
+        chars = len(reasoning)
+        if chars <= 700:
+            return 0.0
+        # Soft linear penalty capped at 0.05.
+        return round(min(0.05, (chars - 700) / 8000.0), 4)
