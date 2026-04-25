@@ -1,0 +1,20 @@
+{
+  "seed": 123,
+  "episodes": 1,
+  "max_steps": 120,
+  "avg_reward": 0.0827,
+  "terminal_done_count": 1,
+  "rows": [
+    {
+      "episode": 1,
+      "steps": 90,
+      "done": true,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "behavioral_signal_check_revealed_distress",
+      "total_reward": 0.0827,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0333,
+      "recovery_rate": 0.0041
+    }
+  ]
+}

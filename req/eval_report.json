@@ -1,0 +1,209 @@
+{
+  "comparison": [
+    {
+      "policy": "random",
+      "episodes": 10,
+      "avg_reward": -0.0466,
+      "avg_npa_rate": 0.25,
+      "avg_recovery_rate": 0.0163,
+      "avg_relationship_score": 0.5253,
+      "avg_tool_appropriateness": 0.0,
+      "avg_shortcut_penalty": 0.0,
+      "episodes_raw": [
+        {
+          "episode": 1,
+          "reward": -0.0498,
+          "npa_rate": 0.1667,
+          "recovery_rate": 0.0193,
+          "relationship_score": 0.5005,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 2,
+          "reward": -0.1281,
+          "npa_rate": 0.2667,
+          "recovery_rate": 0.0275,
+          "relationship_score": 0.5545,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 3,
+          "reward": -0.171,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0303,
+          "relationship_score": 0.572,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 4,
+          "reward": -0.1521,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0092,
+          "relationship_score": 0.5338,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 5,
+          "reward": 0.0763,
+          "npa_rate": 0.1,
+          "recovery_rate": 0.0064,
+          "relationship_score": 0.4781,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 6,
+          "reward": -0.0244,
+          "npa_rate": 0.2333,
+          "recovery_rate": 0.0044,
+          "relationship_score": 0.5179,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 7,
+          "reward": -0.0059,
+          "npa_rate": 0.2333,
+          "recovery_rate": 0.0211,
+          "relationship_score": 0.4989,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 8,
+          "reward": 0.07,
+          "npa_rate": 0.1667,
+          "recovery_rate": 0.0105,
+          "relationship_score": 0.5461,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 9,
+          "reward": -0.078,
+          "npa_rate": 0.3667,
+          "recovery_rate": 0.0198,
+          "relationship_score": 0.5143,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 10,
+          "reward": -0.0028,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.014,
+          "relationship_score": 0.537,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        }
+      ]
+    },
+    {
+      "policy": "heuristic",
+      "episodes": 10,
+      "avg_reward": -0.0415,
+      "avg_npa_rate": 0.25,
+      "avg_recovery_rate": 0.0163,
+      "avg_relationship_score": 0.6646,
+      "avg_tool_appropriateness": 0.0,
+      "avg_shortcut_penalty": 0.26,
+      "episodes_raw": [
+        {
+          "episode": 1,
+          "reward": -0.0485,
+          "npa_rate": 0.1667,
+          "recovery_rate": 0.0193,
+          "relationship_score": 0.6985,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 2,
+          "reward": -0.1269,
+          "npa_rate": 0.2667,
+          "recovery_rate": 0.0275,
+          "relationship_score": 0.6441,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 3,
+          "reward": -0.1687,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0303,
+          "relationship_score": 0.6862,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 4,
+          "reward": -0.1493,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0092,
+          "relationship_score": 0.6375,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 5,
+          "reward": 0.0821,
+          "npa_rate": 0.1,
+          "recovery_rate": 0.0064,
+          "relationship_score": 0.6532,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 6,
+          "reward": -0.0194,
+          "npa_rate": 0.2333,
+          "recovery_rate": 0.0044,
+          "relationship_score": 0.642,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 7,
+          "reward": 0.003,
+          "npa_rate": 0.2333,
+          "recovery_rate": 0.0211,
+          "relationship_score": 0.6901,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 8,
+          "reward": 0.0763,
+          "npa_rate": 0.1667,
+          "recovery_rate": 0.0105,
+          "relationship_score": 0.6641,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 9,
+          "reward": -0.0691,
+          "npa_rate": 0.3667,
+          "recovery_rate": 0.0198,
+          "relationship_score": 0.6636,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        },
+        {
+          "episode": 10,
+          "reward": 0.0059,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.014,
+          "relationship_score": 0.667,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.26
+        }
+      ]
+    }
+  ],
+  "notes": "Use this as baseline-vs-policy evidence. Add trained-policy row after checkpoint integration."
+}

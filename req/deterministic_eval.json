@@ -1,0 +1,64 @@
+{
+  "seed": 123,
+  "episodes": 5,
+  "max_steps": 1080,
+  "avg_reward": 0.95708,
+  "terminal_done_count": 5,
+  "rows": [
+    {
+      "episode": 1,
+      "steps": 90,
+      "done": true,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "cluster_ecosystem_discipline_improved",
+      "total_reward": 0.9854,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    },
+    {
+      "episode": 2,
+      "steps": 90,
+      "done": true,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "behavioral_signal_check_revealed_distress",
+      "total_reward": 0.9708,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    },
+    {
+      "episode": 3,
+      "steps": 90,
+      "done": true,
+      "msme_probe_outcome": "information_verified_genuine_stress",
+      "startup_probe_outcome": "cluster_ecosystem_discipline_improved",
+      "total_reward": 0.9558,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    },
+    {
+      "episode": 4,
+      "steps": 90,
+      "done": true,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "cluster_ecosystem_discipline_improved",
+      "total_reward": 0.9414,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    },
+    {
+      "episode": 5,
+      "steps": 210,
+      "done": true,
+      "msme_probe_outcome": "information_verified_genuine_stress",
+      "startup_probe_outcome": "behavioral_signal_check_revealed_distress",
+      "total_reward": 0.932,
+      "reward_source": "terminal_episode_reward",
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    }
+  ]
+}
