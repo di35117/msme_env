@@ -107,50 +107,65 @@ Respond with your action in this exact JSON format:
 
 
 def build_agent_prompt(observation: Dict) -> str:
-    working_mem      = observation.get("working_memory", "")
-    semantic_mem     = observation.get("semantic_memory_context", "")
-    episodic_mem     = observation.get("episodic_memory_context", "")
+    """
+    Compact prompt designed for small LMs (0.5B-1.7B).
+
+    Long prompts (full memory tiers + JSON dump of all accounts) cause small models
+    to lose format discipline — they emit ``` or whitespace instead of JSON.
+    This version sends only what's needed to choose ONE action this step:
+    portfolio summary, top alerts, and the 3 most urgent accounts as flat lines.
+    """
+    summary  = observation.get("portfolio_summary", {}) or {}
+    month    = summary.get("current_month", observation.get("month", 1))
+    npa_rate = summary.get("npa_rate", 0.0)
+    cum_r    = summary.get("cumulative_reward", observation.get("episode_reward_so_far", 0.0))
+
     msme_accounts    = observation.get("msme_accounts", [])
     startup_accounts = observation.get("startup_accounts", [])
-    alerts           = (
-        observation.get("active_cluster_alerts", [])
-        + observation.get("active_ecosystem_alerts", [])
-    )
-
     urgent = sorted(
         msme_accounts + startup_accounts,
         key=lambda x: x.get("dpd", 0),
         reverse=True,
-    )[:5]
+    )[:3]
 
-    urgent_str = json.dumps(urgent, ensure_ascii=False, indent=2)
-    summary    = json.dumps(observation.get("portfolio_summary", {}), indent=2)
+    acct_lines = []
+    for acc in urgent:
+        acc_id   = acc.get("account_id", "?")
+        acc_type = acc.get("account_type", "msme")
+        dpd      = acc.get("dpd", 0)
+        signal   = (
+            acc.get("last_message")
+            or acc.get("latest_signal")
+            or acc.get("last_rm_message")
+            or ""
+        )
+        if len(signal) > 100:
+            signal = signal[:97] + "..."
+        acct_lines.append(
+            f"  id={acc_id} type={acc_type} dpd={dpd} signal=\"{signal}\""
+        )
+    acct_block = "\n".join(acct_lines) if acct_lines else "  (none)"
 
-    return f"""=== PORTFOLIO STATE ===
-{summary}
+    alerts = (
+        observation.get("active_cluster_alerts", [])
+        + observation.get("active_ecosystem_alerts", [])
+    )[:2]
+    alert_str = " | ".join(alerts) if alerts else "none"
 
-=== WORKING MEMORY ===
-{working_mem}
+    last      = observation.get("last_action_result") or {}
+    last_line = ""
+    if last:
+        outcome   = last.get("outcome", "")
+        last_r    = last.get("step_reward", "")
+        last_line = f"\nLast action: outcome={outcome} reward={last_r}"
 
-=== SEMANTIC MEMORY (learned patterns) ===
-{semantic_mem}
-
-=== EPISODIC MEMORY (similar past cases) ===
-{episodic_mem}
-
-=== ACTIVE ALERTS ===
-{chr(10).join(alerts) if alerts else "(none)"}
-
-=== TOP 5 ACCOUNTS NEEDING ATTENTION (by DPD) ===
-{urgent_str}
-
-Based on all of the above, decide your next action using behavioral signals:
-1. Identify the most urgent account.
-2. Match observed signals to known risk patterns.
-3. Choose a valid action for the account type.
-4. Keep reasoning concise (1-2 sentences).
-
-Respond with JSON only:"""
+    return (
+        f"Month {month}/36. NPA={npa_rate:.1%}. CumReward={cum_r:.3f}.{last_line}\n"
+        f"Alerts: {alert_str}\n"
+        f"Top urgent accounts:\n{acct_block}\n\n"
+        f"Choose the single best action for the most urgent account. "
+        f"Respond with one JSON object only."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +651,16 @@ def run_training(
         Returns None when parsing is not possible.
         """
         clean = generated_text.strip()
+
+        # Qwen3 thinking-mode tags can leak into output. Real JSON appears AFTER
+        # </think>. If a block is opened but never closed (token budget exhausted
+        # inside the think block), discard everything from the opening tag.
+        if "<think>" in clean:
+            clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL)
+            if "<think>" in clean:
+                clean = clean[:clean.index("<think>")]
+            clean = clean.strip()
+
         if clean.startswith("```"):
             parts = clean.split("```")
             clean = parts[1] if len(parts) > 1 else clean
@@ -696,13 +721,19 @@ def run_training(
         """
         Convert executed action object to strict JSON for RL targets.
         This prevents reinforcing malformed raw generations.
+
+        Key order matches JSON_PREFILL ('{"action_type": "') so the canonical
+        completion is consistent with how the model is prompted to generate.
         """
         reasoning = getattr(action, "reasoning", "") or fallback_reason or "Action selected from portfolio signals."
+        params    = getattr(action, "parameters", {})
+        if not isinstance(params, dict):
+            params = {}
         payload = {
-            "reasoning": str(reasoning),
             "action_type": str(getattr(action, "action_type", "wait_and_observe")),
             "account_id": max(1, min(30, int(getattr(action, "account_id", 1)))),
-            "parameters": getattr(action, "parameters", {}) if isinstance(getattr(action, "parameters", {}), dict) else {},
+            "parameters": params,
+            "reasoning": str(reasoning),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -728,11 +759,14 @@ def run_training(
             truncation=True,
             max_length=2048,
         ).to(model.device)
+        model.eval()
         with torch.no_grad():
             extractor_outputs = model.generate(
                 **extractor_inputs,
-                max_new_tokens=160,
+                max_new_tokens=200,
                 do_sample=False,
+                repetition_penalty=1.15,
+                no_repeat_ngram_size=4,
                 pad_token_id=tokenizer.eos_token_id,
             )
         extractor_generated = tokenizer.decode(
@@ -745,14 +779,14 @@ def run_training(
         """
         Build model input using tokenizer chat template when available.
         Falls back to manual role tags for older tokenizers.
+
+        Qwen3 defaults to thinking mode, which can consume the entire generation
+        budget inside <think>. We try official enable_thinking=False first, then
+        fall back to the /no_think soft-control token used by older Qwen3 builds.
         """
-        no_think_hint = (
-            "CRITICAL OUTPUT RULE: Do NOT emit <think> or hidden reasoning tags. "
-            "Return only final structured JSON."
-        )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"/no_think\n{no_think_hint}\n\n{user_prompt}"},
+            {"role": "user",   "content": user_prompt},
         ]
         if hasattr(tokenizer, "apply_chat_template"):
             try:
@@ -760,10 +794,25 @@ def run_training(
                     messages,
                     tokenize=False,
                     add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                pass
+            except Exception:
+                pass
+            try:
+                no_think_msgs = [
+                    messages[0],
+                    {"role": "user", "content": user_prompt + "\n/no_think"},
+                ]
+                return tokenizer.apply_chat_template(
+                    no_think_msgs,
+                    tokenize=False,
+                    add_generation_prompt=True,
                 )
             except Exception:
                 pass
-        return f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{user_prompt}\n<|assistant|>\n"
+        return f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{user_prompt}\n/no_think\n<|assistant|>\n"
 
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
@@ -790,33 +839,51 @@ def run_training(
         extractor_recoveries = 0
         heuristic_fallbacks = 0
 
+        # JSON prefill: forces the model to continue a JSON object instead of
+        # deciding the output format from scratch. Eliminates the "``` + spaces"
+        # degenerate mode seen on small models with greedy decoding.
+        # Order matches _serialize_action_for_training key order.
+        JSON_PREFILL = '{"action_type": "'
+
         while not episode_done and step_count < max_steps_per_episode:
             prompt      = build_agent_prompt(obs)
             full_prompt = _build_full_prompt(prompt)
 
+            # Append prefill AFTER the chat template's assistant turn marker,
+            # so the model sees the start of a JSON object as its own output
+            # and continues it rather than restarting with markdown fences.
+            full_prompt_with_prefill = full_prompt + JSON_PREFILL
+
             import torch
             inputs = tokenizer(
-                full_prompt,
+                full_prompt_with_prefill,
                 return_tensors="pt",
                 truncation=True,
                 max_length=3072,
             ).to(model.device)
 
+            # Generation must run in eval mode. After the first GRPO update
+            # model.train() is left on, which can degrade greedy generation.
+            model.eval()
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=160,
+                    max_new_tokens=220,
                     do_sample=False,
+                    repetition_penalty=1.15,
+                    no_repeat_ngram_size=4,
                     pad_token_id=tokenizer.eos_token_id,
                 )
-            generated = tokenizer.decode(
+            generated_suffix = tokenizer.decode(
                 outputs[0][inputs["input_ids"].shape[1]:],
                 skip_special_tokens=True,
             )
+            # Reconstruct full JSON: prefill + model continuation.
+            generated = JSON_PREFILL + generated_suffix
             if episode <= 2 and step_count < 3:
                 print("  Debug generation sample:", repr(generated[:240]))
 
-            # Parse action — strip markdown fences if present
+            # Parse action (parser handles <think> stripping and fences).
             completion_for_training = generated
             try:
                 action = _parse_action_from_text(generated, obs)
@@ -860,9 +927,17 @@ def run_training(
                     step_reward  = obs.get("step_reward", 0.0)
                     episode_done = obs.get("done", False)
 
+            # GRPO loss masks prompt tokens, so gradients flow only through the
+            # completion suffix. Storing prompt+prefill as "prompt" and the
+            # canonical JSON minus prefill as "completion" mirrors the
+            # generation pattern exactly.
+            if completion_for_training.startswith(JSON_PREFILL):
+                completion_suffix_for_training = completion_for_training[len(JSON_PREFILL):]
+            else:
+                completion_suffix_for_training = completion_for_training
             episode_step_data.append({
-                "prompt":      full_prompt,
-                "completion":  completion_for_training,
+                "prompt":      full_prompt_with_prefill,
+                "completion":  completion_suffix_for_training,
                 "step_reward": step_reward,
             })
             step_count += 1
