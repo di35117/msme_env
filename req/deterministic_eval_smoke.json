@@ -1,0 +1,25 @@
+{
+  "seed": 123,
+  "episodes": 2,
+  "avg_reward": 0.53335,
+  "rows": [
+    {
+      "episode": 1,
+      "steps": 90,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "cluster_ecosystem_discipline_improved",
+      "total_reward": 0.0667,
+      "npa_rate": 0.0333,
+      "recovery_rate": 0.0032
+    },
+    {
+      "episode": 2,
+      "steps": 90,
+      "msme_probe_outcome": "tool_execution_failed",
+      "startup_probe_outcome": "cluster_ecosystem_discipline_improved",
+      "total_reward": 1.0,
+      "npa_rate": 0.0,
+      "recovery_rate": 0.0
+    }
+  ]
+}
