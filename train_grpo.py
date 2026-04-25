@@ -632,7 +632,7 @@ def run_training(
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=256,
-                    temperature=0.7,
+                    temperature=0.2,
                     do_sample=True,
                     pad_token_id=tokenizer.eos_token_id,
                 )
@@ -658,7 +658,9 @@ def run_training(
                 )
             except Exception:
                 action = MSMERLAction(
-                    action_type="format_error", # CHANGED: Explicitly flag as an error
+                    # Use a valid conservative action on parse failures to avoid
+                    # collapsing early rollouts into repeated format penalties.
+                    action_type="wait_and_observe",
                     account_id=1,
                     parameters={},
                     reasoning="(parse error)",
