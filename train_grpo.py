@@ -434,6 +434,10 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         "fp16": use_fp16,
         "bf16": use_bf16,
         "report_to": "none",
+        # Unsloth SFT can default to padding_free=True in some stacks, which
+        # requires packing/truncation constraints. Disable it for compatibility.
+        "padding_free": False,
+        "packing": False,
     }
 
     # Prefer TRL's SFTConfig when available to avoid TrainingArguments/TRL
