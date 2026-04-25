@@ -687,6 +687,26 @@ def run_training(
 
         return None
 
+    def _build_full_prompt(user_prompt: str) -> str:
+        """
+        Build model input using tokenizer chat template when available.
+        Falls back to manual role tags for older tokenizers.
+        """
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        if hasattr(tokenizer, "apply_chat_template"):
+            try:
+                return tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        return f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{user_prompt}\n<|assistant|>\n"
+
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
@@ -711,7 +731,7 @@ def run_training(
 
         while not episode_done and step_count < max_steps_per_episode:
             prompt      = build_agent_prompt(obs)
-            full_prompt = f"<|system|>\n{SYSTEM_PROMPT}\n<|user|>\n{prompt}\n<|assistant|>\n"
+            full_prompt = _build_full_prompt(prompt)
 
             import torch
             inputs = tokenizer(
@@ -732,6 +752,8 @@ def run_training(
                 outputs[0][inputs["input_ids"].shape[1]:],
                 skip_special_tokens=True,
             )
+            if episode <= 2 and step_count < 3:
+                print("  Debug generation sample:", repr(generated[:240]))
 
             # Parse action — strip markdown fences if present
             try:
