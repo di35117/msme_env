@@ -412,6 +412,18 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     print(f"  SFT dataset: {len(sft_dataset)} examples")
 
+    # Match precision flags to the loaded model dtype to avoid
+    # Unsloth/TRL precision mismatches (bf16 model + fp16 args).
+    import torch
+    train_dtype = None
+    try:
+        train_dtype = next(model.parameters()).dtype
+    except Exception:  # noqa: BLE001
+        train_dtype = None
+
+    use_bf16 = train_dtype == torch.bfloat16
+    use_fp16 = not use_bf16
+
     sft_args_kwargs = {
         "output_dir": os.path.join(output_dir, "sft_warmstart"),
         "per_device_train_batch_size": 4,
@@ -419,7 +431,8 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         "learning_rate": 2e-5,
         "logging_steps": 5,
         "save_strategy": "no",
-        "fp16": True,
+        "fp16": use_fp16,
+        "bf16": use_bf16,
         "report_to": "none",
     }
 
