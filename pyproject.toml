@@ -38,5 +38,15 @@ server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["msmeEnv", "msmeEnv.server"]
-package-dir = { "msmeEnv" = ".", "msmeEnv.server" = "server" }
+packages = [
+    "msmeEnv",
+    "msmeEnv.server",
+    "msmeEnv.domains",
+    "msmeEnv.domains.msme_startup",
+]
+package-dir = {
+    "msmeEnv" = ".",
+    "msmeEnv.server" = "server",
+    "msmeEnv.domains" = "domains",
+    "msmeEnv.domains.msme_startup" = "domains/msme_startup",
+}
