@@ -615,6 +615,7 @@ def run_training(
         episode_step_data: List[Dict] = []
         step_count    = 0
         episode_done  = False
+        parse_failures = 0
 
         while not episode_done and step_count < max_steps_per_episode:
             prompt      = build_agent_prompt(obs)
@@ -631,7 +632,7 @@ def run_training(
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=256,
+                    max_new_tokens=128,
                     temperature=0.2,
                     do_sample=True,
                     pad_token_id=tokenizer.eos_token_id,
@@ -657,6 +658,7 @@ def run_training(
                     reasoning=action_data.get("reasoning", ""),
                 )
             except Exception:
+                parse_failures += 1
                 action = MSMERLAction(
                     # Use a valid conservative action on parse failures to avoid
                     # collapsing early rollouts into repeated format penalties.
@@ -725,6 +727,10 @@ def run_training(
             f"steps={step_count} | "
             f"reward={episode_reward:.4f} | "
             f"time={elapsed:.0f}s"
+        )
+        print(
+            f"    Parse failures: {parse_failures}/{step_count} "
+            f"({(parse_failures / max(1, step_count)):.1%})"
         )
         
         if ep_breakdown:
@@ -825,7 +831,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             return
         model._grpo_optimizer = torch.optim.AdamW(
             trainable,
-            lr=1e-5,
+            lr=3e-6,
             weight_decay=0.01,
         )
         print("    GRPO optimizer initialized")
