@@ -1142,19 +1142,40 @@ def run_training(
             for s in all_steps:
                 s["advantage"] = (s["reward"] - mean_r) / std_r
 
-            # CRITICAL: drop steps where the model didn't actually produce a
-            # parseable completion. On those steps the heuristic fallback chose
-            # the action, so the "completion" text is ours, not the model's —
-            # training on it would push the model to imitate text it never
-            # generated and is the dominant cause of mode collapse seen in
-            # earlier runs (parse-failure rate climbing from 0% → 90%).
+            # FILTERED BEHAVIOR-CLONING + RL.
+            # We keep two kinds of training samples:
+            #   1. Anything the model produced itself (parse_status in
+            #      {first_pass, extractor}) — gradient flows normally; this is
+            #      pure GRPO on text the model actually generated.
+            #   2. Fallback samples (heuristic chose the action) BUT only when
+            #      the action did well — i.e. positive advantage. This treats
+            #      good heuristic decisions as expert demonstrations the model
+            #      should imitate, while preventing it from inheriting the
+            #      heuristic's mistakes.
+            #
+            # Without rule (2) the 1.5B model has no teacher: pure RL
+            # exploration on a 21-action 30-account environment converges far
+            # too slowly within a hackathon's compute budget.
+            BC_ADV_THRESHOLD = 0.0  # only positive-advantage heuristic samples
             total_steps_collected = len(all_steps)
-            all_steps = [s for s in all_steps if s.get("parse_status", "first_pass") != "fallback"]
-            dropped_for_fallback  = total_steps_collected - len(all_steps)
-            if dropped_for_fallback:
+            kept = []
+            dropped_fallback_neg = 0
+            kept_fallback_pos    = 0
+            for s in all_steps:
+                status = s.get("parse_status", "first_pass")
+                if status != "fallback":
+                    kept.append(s)
+                elif s.get("advantage", 0.0) > BC_ADV_THRESHOLD:
+                    kept.append(s)
+                    kept_fallback_pos += 1
+                else:
+                    dropped_fallback_neg += 1
+            all_steps = kept
+            if dropped_fallback_neg or kept_fallback_pos:
                 print(
-                    f"    GRPO filter | dropping {dropped_for_fallback}/{total_steps_collected} "
-                    f"fallback samples (model didn't produce these completions)"
+                    f"    GRPO filter | {total_steps_collected} total | "
+                    f"kept_fallback_pos={kept_fallback_pos} (BC from heuristic) | "
+                    f"dropped_fallback_neg={dropped_fallback_neg} (bad heuristic moves)"
                 )
             if not all_steps:
                 print("    GRPO update skipped: every step was a heuristic fallback")
@@ -1261,15 +1282,16 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         if not trainable:
             print("    WARNING: No trainable parameters found. Check LoRA setup.")
             return
-        # Lower LR (was 1e-5). Earlier runs showed entropy collapsing inside
-        # episode 1 and KL drifting from 0 → 1.0 in 5 episodes; smaller steps
-        # let the policy improve without snapping off the SFT format manifold.
+        # LR history:
+        #   1e-5 → policy collapsed (KL → 1.0, parse → 90% in 5 ep)
+        #   3e-6 → policy froze   (KL ≈ 0.01 over 5 ep, no learning)
+        #   5e-6 → middle ground: enough signal to move, not enough to diverge
         model._grpo_optimizer = torch.optim.AdamW(
             trainable,
-            lr=3e-6,
+            lr=5e-6,
             weight_decay=0.01,
         )
-        print("    GRPO optimizer initialized (lr=3e-6)")
+        print("    GRPO optimizer initialized (lr=5e-6)")
 
     optimizer = model._grpo_optimizer
 
@@ -1286,11 +1308,12 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     import torch.nn.functional as F
 
     # Loss = pg_loss + kl_coef * KL(current || reference) - ent_coef * entropy
-    # Re-tuned after observing KL drift to ~1.0 and entropy collapse to ~0.1
-    # within 5 episodes at the previous (KL=0.05, ENT=0.01) setting.
-    # KL_COEF 4x stronger pulls the policy back toward the SFT reference;
-    # ENT_COEF 5x stronger keeps the completion distribution from collapsing.
-    KL_COEF  = 0.20
+    # KL_COEF history:
+    #   0.05 → too weak, policy drifted to KL=1.0 and degenerated
+    #   0.20 → too strong, policy frozen at KL=0.01 (no learning)
+    #   0.10 → loose enough for movement, strong enough to keep the format
+    # ENT_COEF kept at 0.05 — entropy held above 0.7 in last run, healthy.
+    KL_COEF  = 0.10
     ENT_COEF = 0.05
 
     total_kl_value      = 0.0
