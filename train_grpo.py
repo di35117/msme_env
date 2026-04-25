@@ -173,9 +173,13 @@ def _safe_import_sft_trainer():
     pathlib.Path.read_text = _utf8_read_text  # type: ignore[assignment]
     try:
         from trl import SFTTrainer  # noqa: WPS433
-        return SFTTrainer, None
+        try:
+            from trl import SFTConfig  # type: ignore  # noqa: WPS433
+        except Exception:  # noqa: BLE001
+            SFTConfig = None
+        return SFTTrainer, SFTConfig, None
     except Exception as exc:  # noqa: BLE001
-        return None, exc
+        return None, None, exc
 
 
 def run_sft_warm_start(model, tokenizer, output_dir):
@@ -185,7 +189,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     Without this, early GRPO rollouts are nearly random and convergence takes much longer.
     """
     print("Starting SFT Warm Start...")
-    SFTTrainer, sft_import_error = _safe_import_sft_trainer()
+    SFTTrainer, SFTConfig, sft_import_error = _safe_import_sft_trainer()
     if SFTTrainer is None:
         print(f"Skipping SFT warm start: could not import TRL SFTTrainer ({sft_import_error})")
         print("Continuing with RL-only startup for this run.")
@@ -400,16 +404,25 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     print(f"  SFT dataset: {len(sft_dataset)} examples")
 
-    sft_args = TrainingArguments(
-        output_dir=os.path.join(output_dir, "sft_warmstart"),
-        per_device_train_batch_size=4,
-        num_train_epochs=3,
-        learning_rate=2e-5,
-        logging_steps=5,
-        save_strategy="no",
-        fp16=True,
-        report_to="none",
-    )
+    sft_args_kwargs = {
+        "output_dir": os.path.join(output_dir, "sft_warmstart"),
+        "per_device_train_batch_size": 4,
+        "num_train_epochs": 3,
+        "learning_rate": 2e-5,
+        "logging_steps": 5,
+        "save_strategy": "no",
+        "fp16": True,
+        "report_to": "none",
+    }
+
+    # Prefer TRL's SFTConfig when available to avoid TrainingArguments/TRL
+    # field mismatches (e.g. push_to_hub_token incompatibilities).
+    if SFTConfig is not None:
+        cfg_sig = inspect.signature(SFTConfig.__init__)
+        filtered = {k: v for k, v in sft_args_kwargs.items() if k in cfg_sig.parameters}
+        sft_args = SFTConfig(**filtered)
+    else:
+        sft_args = TrainingArguments(**sft_args_kwargs)
 
     # TRL API differs by version. Build kwargs based on supported parameters.
     trainer_kwargs = {
