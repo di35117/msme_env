@@ -384,4 +384,4 @@ uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
 Not required for judging.
 
 You only need an `inference.py` if you want a dedicated script to run a saved checkpoint policy for demo or offline comparison.  
-For current submission goals, environment server + eval scripts are sufficient.
+For current submission goals, environment server + eval scripts are sufficient enough
