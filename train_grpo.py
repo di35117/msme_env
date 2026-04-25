@@ -584,6 +584,17 @@ def run_training(
             return asyncio.run(value)
         return value
 
+    def _switch_to_direct_env():
+        """Switch to direct in-process env when HTTP/WebSocket server is unavailable."""
+        nonlocal env, use_direct
+        print("Remote env connection failed; falling back to direct environment instantiation")
+        try:
+            from server.msmeEnv_environment import MSMERLEnvironment
+        except (ImportError, ModuleNotFoundError):
+            from msmeEnv_environment import MSMERLEnvironment
+        env = MSMERLEnvironment()
+        use_direct = True
+
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
@@ -592,8 +603,14 @@ def run_training(
             obs_obj = env.reset()
             obs = obs_obj.__dict__ if hasattr(obs_obj, "__dict__") else {}
         else:
-            result = _resolve_maybe_await(env.reset())
-            obs = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
+            try:
+                result = _resolve_maybe_await(env.reset())
+                obs = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
+            except Exception as e:
+                print(f"Could not reset remote env: {e}")
+                _switch_to_direct_env()
+                obs_obj = env.reset()
+                obs = obs_obj.__dict__ if hasattr(obs_obj, "__dict__") else {}
 
         episode_step_data: List[Dict] = []
         step_count    = 0
@@ -653,10 +670,18 @@ def run_training(
                 step_reward  = obs.get("step_reward", 0.0)
                 episode_done = obs.get("done", False)
             else:
-                result       = _resolve_maybe_await(env.step(action))
-                obs          = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
-                step_reward  = result.reward or 0.0
-                episode_done = result.done
+                try:
+                    result       = _resolve_maybe_await(env.step(action))
+                    obs          = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
+                    step_reward  = result.reward or 0.0
+                    episode_done = result.done
+                except Exception as e:
+                    print(f"Could not step remote env: {e}")
+                    _switch_to_direct_env()
+                    obs_obj      = env.step(action)
+                    obs          = obs_obj.__dict__ if hasattr(obs_obj, "__dict__") else {}
+                    step_reward  = obs.get("step_reward", 0.0)
+                    episode_done = obs.get("done", False)
 
             episode_step_data.append({
                 "prompt":      full_prompt,
