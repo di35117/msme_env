@@ -15,144 +15,163 @@ tags:
 
 # Linguistic Decoding RL
 
-An OpenEnv environment where a small language model learns to decode hidden distress from language and behavior in partially observable financial communication.
+A reinforcement learning environment where an LLM learns to decode hidden state from language and behavior over time, then select the right intervention action.
 
-## Problem Statement
+This project is built around a concrete **MSME + startup credit demo** (India), while using a modular architecture that can generalize to other linguistic-decoding domains.
 
-Many borrowers do not state financial risk directly.
-They hide it through communication style:
+---
 
-- **Understatement pattern:** "Small issue, will pay soon" while stress is high.
-- **Overconfidence pattern:** "Great momentum, exciting pipeline" while runway is collapsing.
+## Why This Exists
 
-The core task is **linguistic decoding under hidden state**, not generic sentiment classification.
-The agent must infer latent risk from language plus behavioral evidence and choose the right intervention over multiple steps.
+In high-stakes communication, people rarely state reality directly.
 
-## Why This Is an RL Problem
+- MSME borrowers may **understate** stress.
+- Startup founders may **overstate** health.
+- Surface text can be misleading without behavioral and temporal context.
 
-This task needs sequential decision making:
+So this is not sentiment classification and not a chatbot.
+It is a sequential decision problem with hidden state and delayed outcomes.
 
-- The true financial state is hidden.
-- The agent acts, then sees delayed consequences.
-- Wrong actions can create cascading future risk.
-- Reward is sparse if we only score at the end, so we combine step and episode rewards.
+---
 
-A static classifier cannot optimize intervention strategy across a horizon. RL can.
+## What The Agent Learns
 
-## Environment Design
+At each step, the agent:
 
-The environment is structured as a **core decoder + domain sub-environments**:
+1. observes messages + behavioral proxies,
+2. chooses a policy action,
+3. receives step reward and delayed episode reward,
+4. updates behavior over episodes.
 
-### 1) Core Environment: Linguistic Decoding
+The learning target is robust linguistic decoding under partial observability.
 
-Shared abstractions across all domains:
+---
 
-- Observation:
-  - `message_text`
-  - `speaker_profile`
-  - `behavioral_signals`
-  - `recent_actions`
-  - `time_step`
-- Hidden state:
-  - true risk and trajectory (not visible to agent)
-- Actions:
-  - ask clarification, verify signal, soft reminder, firm reminder, restructure, escalate
-- Transition:
-  - hidden state evolves based on action quality and account dynamics
+## Architecture
 
-### 2) Sub-Environment A: MSME Module
+### High-Level Flow
 
-- Distress often appears as understatement.
-- Signals emphasize payment cadence, GST regularity, call response, and cluster effects.
+```text
+Agent Policy (LLM)
+        |
+        v
+OpenEnv Server (`server/app.py`)
+        |
+        v
+Environment Core (`server/msmeEnv_environment.py`)
+        |
+        v
+Domain Adapter Registry (`domains/__init__.py`)
+        |
+        v
+MSME+Startup Adapter (`domains/msme_startup/adapter.py`)
+        |
+        +--> World generation (`world_generator.py`)
+        +--> Reward logic (`reward.py`)
+        +--> Network effects (`network.py`)
+        +--> Message generation (`message_generator.py`)
+        +--> Memory updates (`memory.py`)
+```
 
-### 3) Sub-Environment B: Startup Module
+### Design Principle
 
-- Distress often appears as overconfidence.
-- Signals emphasize runway proxies, investor update cadence, hiring activity, and ecosystem effects.
+- **Core environment** handles episode lifecycle, state orchestration, OpenEnv contracts.
+- **Domain adapter** encapsulates domain-specific semantics.
+- **Domain logic modules** keep reward/world/network/message behavior explicit and testable.
 
-This split keeps the science focused (linguistic decoding) while preserving real-world specificity.
+This lets you keep a strong concrete demo while preserving extensibility.
+
+---
+
+## Domain Design (Current Demo)
+
+Current active domain: `msme_startup`
+
+- 20 MSME accounts + 10 startup accounts
+- 36-month horizon
+- 21+ action types
+- two interacting topologies:
+  - MSME cluster contagion
+  - startup ecosystem propagation
+
+This creates asymmetric decoding pressure:
+- understatement vs overstatement
+- same text pattern, different latent meaning by speaker profile and behavior.
+
+---
 
 ## Reward Design
 
-### Step Rewards
+### Step Reward
 
-- Positive for actions that reveal hidden state early and improve repayment discipline.
-- Negative for inappropriate tool usage, missed distress signals, and avoidable escalation.
+Immediate feedback for action quality:
+- positive for appropriate intervention and useful verification,
+- negative for wrong tool usage, missed distress, avoidable cascades.
 
-### Episode Rewards
+### Episode Reward
 
-Weighted objective over:
+Hard-number objective (no LLM judge), combining:
+- NPA/default behavior,
+- recovery quality,
+- relationship/trust preservation,
+- tool appropriateness.
 
-- final default/NPA rate
-- recovery rate
-- relationship preservation
-- tool appropriateness by account type
+---
 
-## Training Setup
+## OpenEnv Compliance
 
-- Base model: small instruct LLM (for example, 1B-2B class)
-- RL method: GRPO with TRL
-- Environment API: OpenEnv-compliant `reset`, `step`, `state`
-- Deployment target: Hugging Face Space
+The environment remains OpenEnv-compliant:
 
-## Evaluation Plan
+- manifest: `openenv.yaml`
+- app entrypoint: `server.app:app`
+- standard contracts: `reset`, `step`, `state`
+- compatible server wiring in `server/app.py`
 
-To satisfy judging requirements, we report:
+---
 
-- reward curve over episodes
-- loss curve over training
-- before vs after policy behavior on fixed deterministic scenarios
-- baseline comparison (untrained or random policy)
+## Training + Evaluation Workflow
 
-## Why This Scope Is Strong for Hackathon
-
-This framing reduces execution risk while staying ambitious:
-
-- It keeps a clear novel claim: **asymmetric linguistic decoding under hidden state**.
-- It avoids overloading the first milestone with too many world mechanics.
-- It still allows expansion: MSME and startup remain first-class sub-environments.
-
-## Alignment With OpenEnv Hackathon Criteria
-
-- **Environment Innovation (40%)**: Novel partially observable communication-to-action loop.
-- **Storytelling (30%)**: Simple and memorable narrative: decode two opposite communication masks.
-- **Showing Improvement (20%)**: Deterministic trap scenarios make before/after behavior obvious.
-- **Reward + Pipeline (10%)**: Verifiable reward components and reproducible training script.
-
-## Deliverables Checklist
-
-- [ ] OpenEnv-compliant environment hosted on HF Space
-- [ ] Training script (TRL/Unsloth) runnable end-to-end
-- [ ] Committed reward/loss plots (`.png` or `.jpg`)
-- [ ] Committed baseline-vs-trained plots (`.png` or `.jpg`)
-- [ ] README with links to Space, training notebook/script, and short demo/writeup
-- [ ] Short demo (<=2 minutes) showing clear learned behavior shift
-
-## Submission Evidence (Exact Commands)
-
-Run these in order to generate reproducible evidence:
+### 1) Run random baseline
 
 ```bash
-# 1) Run baseline (random policy)
 py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
+```
 
-# 2) Train the model (example)
+### 2) Train policy
+
+```bash
 py -3 train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
+```
 
-# 3) Generate judge artifacts from training + baseline
+### 3) Generate judge artifacts
+
+```bash
 py -3 scripts/generate_judge_artifacts.py --training_json msme_rl_checkpoints/reward_curve.json --baseline_json artifacts/baseline_rewards.json --output_dir artifacts
+```
 
-# 4) Run deterministic fixed-seed eval
+### 4) Deterministic fixed-seed eval
+
+```bash
 py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 --output artifacts/deterministic_eval.json
+```
 
-# 5) Validate adapter registry (no extra deps)
+### 5) Validate domain registry wiring
+
+```bash
 py -3 scripts/check_domain_registry.py
+```
 
-# Optional: run pytest version (if installed)
+Optional if pytest is installed:
+
+```bash
 py -3 -m pytest tests/test_domain_registry.py
 ```
 
-Commit these files for judging:
+---
+
+## Artifact Pack For Judges
+
+Commit these generated files:
 
 - `artifacts/training_reward_curve.png`
 - `artifacts/training_loss_curve.png`
@@ -163,12 +182,13 @@ Commit these files for judging:
 - `artifacts/deterministic_eval.json`
 - `artifacts/baseline_rewards.json`
 
-## Quick Start (Local)
+These cover the typical judging asks:
+- reward improvement,
+- policy loss behavior,
+- base-vs-trained evidence,
+- reproducibility manifest.
 
-```bash
-docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
-uvicorn server.app:app --reload
-```
+---
 
 ## Project Structure
 
@@ -176,27 +196,60 @@ uvicorn server.app:app --reload
 msmeEnv/
 ├── README.md
 ├── openenv.yaml
-├── train_grpo.py
+├── pyproject.toml
+├── __init__.py
 ├── client.py
 ├── models.py
+├── train_grpo.py
+├── world_generator.py
+├── reward.py
+├── network.py
+├── memory.py
+├── message_generator.py
+│
+├── server/
+│   ├── __init__.py
+│   ├── app.py
+│   └── msmeEnv_environment.py
+│
 ├── domains/
+│   ├── __init__.py
 │   ├── base.py
 │   └── msme_startup/
+│       ├── __init__.py
 │       └── adapter.py
+│
 ├── scripts/
 │   ├── run_baseline_eval.py
 │   ├── run_deterministic_eval.py
-│   ├── check_domain_registry.py
-│   └── generate_judge_artifacts.py
-├── tests/
-│   └── test_domain_registry.py
-└── server/
-    ├── app.py
-    └── msmeEnv_environment.py
+│   ├── generate_judge_artifacts.py
+│   └── check_domain_registry.py
+│
+└── tests/
+    └── test_domain_registry.py
 ```
+
+---
+
+## Local Quick Start
+
+```bash
+docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+---
+
+## Roadmap
+
+- Add more domain adapters (compliance, support escalation, negotiation).
+- Add deterministic benchmark suites per domain.
+- Add side-by-side policy comparison dashboards in Space UI.
+
+---
 
 ## Notes
 
-- `train_grpo.py` stays at repo root as the primary training entrypoint.
-- `scripts/run_baseline_eval.py` and `scripts/generate_judge_artifacts.py` are required for judge-ready evidence (base vs trained and reproducible artifact manifests).
-- Keep `openenv.yaml` pointing to `server.app:app` to preserve OpenEnv compliance.
+- `world_generator.py` is still actively used (via the domain adapter).
+- `train_grpo.py` remains the main training entrypoint at repo root.
+- The adapter layer was added to generalize architecture without breaking current behavior.
