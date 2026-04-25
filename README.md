@@ -124,8 +124,44 @@ This framing reduces execution risk while staying ambitious:
 - [ ] OpenEnv-compliant environment hosted on HF Space
 - [ ] Training script (TRL/Unsloth) runnable end-to-end
 - [ ] Committed reward/loss plots (`.png` or `.jpg`)
+- [ ] Committed baseline-vs-trained plots (`.png` or `.jpg`)
 - [ ] README with links to Space, training notebook/script, and short demo/writeup
 - [ ] Short demo (<=2 minutes) showing clear learned behavior shift
+
+## Submission Evidence (Exact Commands)
+
+Run these in order to generate reproducible evidence:
+
+```bash
+# 1) Run baseline (random policy)
+py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
+
+# 2) Train the model (example)
+py -3 train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
+
+# 3) Generate judge artifacts from training + baseline
+py -3 scripts/generate_judge_artifacts.py --training_json msme_rl_checkpoints/reward_curve.json --baseline_json artifacts/baseline_rewards.json --output_dir artifacts
+
+# 4) Run deterministic fixed-seed eval
+py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 --output artifacts/deterministic_eval.json
+
+# 5) Validate adapter registry (no extra deps)
+py -3 scripts/check_domain_registry.py
+
+# Optional: run pytest version (if installed)
+py -3 -m pytest tests/test_domain_registry.py
+```
+
+Commit these files for judging:
+
+- `artifacts/training_reward_curve.png`
+- `artifacts/training_loss_curve.png`
+- `artifacts/reward_distribution_base_vs_trained.png`
+- `artifacts/per_episode_base_vs_trained.png`
+- `artifacts/judge_summary.json`
+- `artifacts/judge_manifest.json`
+- `artifacts/deterministic_eval.json`
+- `artifacts/baseline_rewards.json`
 
 ## Quick Start (Local)
 
@@ -149,7 +185,11 @@ msmeEnv/
 │       └── adapter.py
 ├── scripts/
 │   ├── run_baseline_eval.py
+│   ├── run_deterministic_eval.py
+│   ├── check_domain_registry.py
 │   └── generate_judge_artifacts.py
+├── tests/
+│   └── test_domain_registry.py
 └── server/
     ├── app.py
     └── msmeEnv_environment.py
