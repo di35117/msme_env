@@ -18,8 +18,10 @@ Or on Colab with Unsloth:
 
 import argparse
 import asyncio
+import ast
 import json
 import os
+import re
 import time
 import pathlib
 import inspect
@@ -625,6 +627,66 @@ def run_training(
             reasoning=reason,
         )
 
+    def _parse_action_from_text(generated_text: str, observation: Dict) -> Any:
+        """
+        Parse model output robustly across common formats:
+        - strict JSON
+        - JSON wrapped in markdown fences
+        - Python-dict-like output
+        - regex-recovered action/account fields
+        Returns None when parsing is not possible.
+        """
+        clean = generated_text.strip()
+        if clean.startswith("```"):
+            parts = clean.split("```")
+            clean = parts[1] if len(parts) > 1 else clean
+            if clean.startswith("json"):
+                clean = clean[4:]
+        clean = clean.strip()
+
+        candidates = [clean]
+        lidx = clean.find("{")
+        ridx = clean.rfind("}")
+        if lidx != -1 and ridx != -1 and ridx > lidx:
+            candidates.append(clean[lidx : ridx + 1])
+
+        def _build_action(data: Dict[str, Any]) -> Any:
+            return MSMERLAction(
+                action_type=str(data.get("action_type", "wait_and_observe")),
+                account_id=max(1, min(30, int(data.get("account_id", 1)))),
+                parameters=data.get("parameters", {}) if isinstance(data.get("parameters", {}), dict) else {},
+                reasoning=str(data.get("reasoning", "")),
+            )
+
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    return _build_action(data)
+            except Exception:
+                pass
+            try:
+                data = ast.literal_eval(candidate)
+                if isinstance(data, dict):
+                    return _build_action(data)
+            except Exception:
+                pass
+
+        # Last-resort regex recovery.
+        action_match = re.search(r"(action_type|action)\s*[:=]\s*['\"]?([a-zA-Z0-9_]+)['\"]?", clean)
+        account_match = re.search(r"(account_id|account)\s*[:=]\s*([0-9]+)", clean)
+        if action_match:
+            action_type = action_match.group(2)
+            account_id = int(account_match.group(2)) if account_match else 1
+            return MSMERLAction(
+                action_type=action_type,
+                account_id=max(1, min(30, account_id)),
+                parameters={},
+                reasoning="(regex-recovered)",
+            )
+
+        return None
+
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
@@ -673,25 +735,10 @@ def run_training(
 
             # Parse action — strip markdown fences if present
             try:
-                clean = generated.strip()
-                if clean.startswith("```"):
-                    parts = clean.split("```")
-                    clean = parts[1] if len(parts) > 1 else clean
-                    if clean.startswith("json"):
-                        clean = clean[4:]
-                # If model emits extra text around JSON, recover JSON object span.
-                if not clean.strip().startswith("{"):
-                    lidx = clean.find("{")
-                    ridx = clean.rfind("}")
-                    if lidx != -1 and ridx != -1 and ridx > lidx:
-                        clean = clean[lidx : ridx + 1]
-                action_data = json.loads(clean.strip())
-                action = MSMERLAction(
-                    action_type=action_data.get("action_type", "wait_and_observe"),
-                    account_id=max(1, min(30, int(action_data.get("account_id", 1)))),
-                    parameters=action_data.get("parameters", {}),
-                    reasoning=action_data.get("reasoning", ""),
-                )
+                action = _parse_action_from_text(generated, obs)
+                if action is None:
+                    parse_failures += 1
+                    action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
             except Exception:
                 parse_failures += 1
                 action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
