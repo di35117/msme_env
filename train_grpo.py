@@ -24,6 +24,12 @@ import pathlib
 import inspect
 from typing import Any, Dict, List
 
+# Unsloth should be imported before transformers/trl when available.
+try:
+    import unsloth  # noqa: F401
+except Exception:  # noqa: BLE001
+    unsloth = None  # type: ignore
+
 from datasets import Dataset
 from transformers import TrainingArguments
 
