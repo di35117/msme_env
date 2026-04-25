@@ -595,6 +595,36 @@ def run_training(
         env = MSMERLEnvironment()
         use_direct = True
 
+    def _heuristic_fallback_action(observation: Dict, reason: str) -> Any:
+        """
+        Build a valid fallback action from current observation instead of repeatedly
+        targeting a fixed account/action on parse failures.
+        """
+        combined = observation.get("msme_accounts", []) + observation.get("startup_accounts", [])
+        if not combined:
+            return MSMERLAction(
+                action_type="wait_and_observe",
+                account_id=1,
+                parameters={},
+                reasoning=reason,
+            )
+        target = sorted(combined, key=lambda x: x.get("dpd", 0), reverse=True)[0]
+        account_id = int(target.get("account_id", 1))
+        account_type = str(target.get("account_type", "msme"))
+        dpd = int(target.get("dpd", 0))
+
+        if account_type == "startup":
+            action_type = "request_investor_update_meeting" if dpd > 20 else "check_startup_ecosystem_signals"
+        else:
+            action_type = "verify_gst_returns" if dpd > 15 else "send_empathetic_reminder"
+
+        return MSMERLAction(
+            action_type=action_type,
+            account_id=account_id,
+            parameters={},
+            reasoning=reason,
+        )
+
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
@@ -632,9 +662,8 @@ def run_training(
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=128,
-                    temperature=0.2,
-                    do_sample=True,
+                    max_new_tokens=96,
+                    do_sample=False,
                     pad_token_id=tokenizer.eos_token_id,
                 )
             generated = tokenizer.decode(
@@ -650,23 +679,22 @@ def run_training(
                     clean = parts[1] if len(parts) > 1 else clean
                     if clean.startswith("json"):
                         clean = clean[4:]
+                # If model emits extra text around JSON, recover JSON object span.
+                if not clean.strip().startswith("{"):
+                    lidx = clean.find("{")
+                    ridx = clean.rfind("}")
+                    if lidx != -1 and ridx != -1 and ridx > lidx:
+                        clean = clean[lidx : ridx + 1]
                 action_data = json.loads(clean.strip())
                 action = MSMERLAction(
                     action_type=action_data.get("action_type", "wait_and_observe"),
-                    account_id=int(action_data.get("account_id", 1)),
+                    account_id=max(1, min(30, int(action_data.get("account_id", 1)))),
                     parameters=action_data.get("parameters", {}),
                     reasoning=action_data.get("reasoning", ""),
                 )
             except Exception:
                 parse_failures += 1
-                action = MSMERLAction(
-                    # Use a valid conservative action on parse failures to avoid
-                    # collapsing early rollouts into repeated format penalties.
-                    action_type="wait_and_observe",
-                    account_id=1,
-                    parameters={},
-                    reasoning="(parse error)",
-                )
+                action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
 
             if use_direct:
                 obs_obj      = env.step(action)
