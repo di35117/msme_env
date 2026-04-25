@@ -24,6 +24,9 @@ import pathlib
 import inspect
 from typing import Any, Dict, List
 
+# Reduce CUDA allocator fragmentation on long RL runs.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # Unsloth should be imported before transformers/trl when available.
 try:
     import unsloth  # noqa: F401
@@ -795,7 +798,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     model.train()
     optimizer.zero_grad()
 
-    total_loss    = None
+    total_loss_value = 0.0
     valid_samples = 0
 
     for i, step_data in enumerate(batch):
@@ -807,7 +810,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
                 full_text,
                 return_tensors="pt",
                 truncation=True,
-                max_length=2048,
+                max_length=1024,
                 padding=False,
             )
             enc = {k: v.to(model.device) for k, v in enc.items()}
@@ -817,7 +820,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
                 step_data["prompt"],
                 return_tensors="pt",
                 truncation=True,
-                max_length=2048,
+                max_length=1024,
             )
             prompt_len = min(
                 prompt_enc["input_ids"].shape[1],
@@ -835,19 +838,22 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             #                         negative advantage -> maximise loss (decrease prob)
             sample_loss = outputs.loss * (-advantage)
 
-            if total_loss is None:
-                total_loss = sample_loss / len(batch)
-            else:
-                total_loss = total_loss + sample_loss / len(batch)
+            # Memory-safe accumulation: backprop per sample instead of retaining
+            # one large computation graph across the full mini-batch.
+            sample_loss = sample_loss / len(batch)
+            sample_loss.backward()
+            total_loss_value += float(sample_loss.detach().item())
 
             valid_samples += 1
 
         except Exception as e:
             print(f"    Skipping sample {i}: {e}")
+            if "out of memory" in str(e).lower():
+                # Try to recover and continue with the remaining samples.
+                torch.cuda.empty_cache()
             continue
 
-    if total_loss is not None and valid_samples > 0:
-        total_loss.backward()
+    if valid_samples > 0:
         # Gradient clipping prevents large updates from destabilising training
         clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad],
@@ -858,14 +864,14 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         pos_frac = (advantages > 0).float().mean().item()
         print(
             f"    GRPO update | n={valid_samples}/{len(batch)} | "
-            f"loss={total_loss.item():.4f} | "
+            f"loss={total_loss_value:.4f} | "
             f"mean_reward={raw_rewards.mean():.4f} | "
             f"pos_frac={pos_frac:.1%}"
         )
     else:
         print("    GRPO update skipped: no valid samples")
         return 0.0
-    return total_loss.item()
+    return total_loss_value
 
 
 # ---------------------------------------------------------------------------
