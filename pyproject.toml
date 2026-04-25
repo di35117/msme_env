@@ -46,9 +46,9 @@ packages = [
     "msmeEnv.domains",
     "msmeEnv.domains.msme_startup",
 ]
-package-dir = {
-    "msmeEnv" = ".",
-    "msmeEnv.server" = "server",
-    "msmeEnv.domains" = "domains",
-    "msmeEnv.domains.msme_startup" = "domains/msme_startup",
-}
+
+[tool.setuptools.package-dir]
+"msmeEnv" = "."
+"msmeEnv.server" = "server"
+"msmeEnv.domains" = "domains"
+"msmeEnv.domains.msme_startup" = "domains/msme_startup"
