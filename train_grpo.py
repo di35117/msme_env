@@ -456,10 +456,16 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     trainer_kwargs = {
         "model": model,
         "train_dataset": sft_dataset,
-        "tokenizer": tokenizer,
         "args": sft_args,
     }
     sft_signature = inspect.signature(SFTTrainer.__init__)
+    # TRL API changed across versions:
+    # - older versions accept `tokenizer`
+    # - newer versions expect `processing_class`
+    if "tokenizer" in sft_signature.parameters:
+        trainer_kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in sft_signature.parameters:
+        trainer_kwargs["processing_class"] = tokenizer
     if "dataset_text_field" in sft_signature.parameters:
         trainer_kwargs["dataset_text_field"] = "text"
     if "max_seq_length" in sft_signature.parameters:
@@ -468,9 +474,10 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     try:
         trainer = SFTTrainer(**trainer_kwargs)
     except TypeError as exc:
-        # Common Unsloth/TRL mismatch on some Colab stacks:
-        # SFTConfig.__init__() got unexpected keyword argument 'push_to_hub_token'
-        if "push_to_hub_token" in str(exc):
+        # Common Unsloth/TRL mismatches on notebook stacks:
+        # - SFTConfig.__init__() got unexpected keyword argument 'push_to_hub_token'
+        # - SFTTrainer.__init__() got an unexpected keyword argument ...
+        if "push_to_hub_token" in str(exc) or "unexpected keyword argument" in str(exc):
             print("Skipping SFT warm start due to Unsloth/TRL args mismatch:", exc)
             print("Continuing with RL-only startup for this run.")
             return model
