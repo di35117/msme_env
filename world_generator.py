@@ -350,8 +350,18 @@ def assign_startup_ecosystem(account_ids: List[int]) -> Dict[int, List[int]]:
 # TOP-LEVEL PORTFOLIO GENERATOR
 # ---------------------------------------------------------------------------
 
-def generate_portfolio(episode: int) -> Dict[str, Any]:
-    difficulty = min(1.0, episode / 50.0)
+def generate_portfolio(episode: int, difficulty_override: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Generate one portfolio instance.
+
+    difficulty_override lets the caller run adaptive curricula based on rolling
+    policy performance while keeping episode-based progression as default.
+    """
+    difficulty = (
+        max(0.0, min(1.0, difficulty_override))
+        if difficulty_override is not None
+        else min(1.0, episode / 50.0)
+    )
 
     msme_ids   = list(range(1, 21))
     startup_ids = list(range(21, 31))

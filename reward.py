@@ -299,11 +299,13 @@ def compute_episode_reward(
                 appropriate_actions -= 0.5 # Actively penalize spamming the same tool
 
     tool_appropriateness = max(0.0, appropriate_actions / total_actions)
+    shortcut_report = detect_suspicious_shortcuts(episode_history)
+    shortcut_penalty = min(0.15, 0.05 * shortcut_report["shortcut_signals"])
 
     # FIXED: Binary reward curriculum for early episodes to prevent signal oscillation
     if episode_num < 30:
         # Phase 1: Pure survival. 1.0 if NPA rate is 0, else heavily penalize.
-        R = 1.0 if npa_rate == 0 else (0.1 - npa_rate)
+        R = (1.0 if npa_rate == 0 else (0.1 - npa_rate)) - shortcut_penalty
     else:
         # Phase 2: Complex shaping
         R = (
@@ -311,7 +313,7 @@ def compute_episode_reward(
             0.30 * recovery_rate              +
             0.20 * relationship_score         +
             0.10 * tool_appropriateness
-        )
+        ) - shortcut_penalty
 
     return {
         "total":                round(R, 4),
@@ -319,8 +321,41 @@ def compute_episode_reward(
         "recovery_rate":        round(recovery_rate, 4),
         "relationship_score":   round(relationship_score, 4),
         "tool_appropriateness": round(tool_appropriateness, 4),
+        "shortcut_penalty": round(shortcut_penalty, 4),
+        "shortcut_signals": shortcut_report["shortcut_signals"],
         "npa_count":            npa_accounts,
         "total_accounts":       total_accounts,
+    }
+
+
+def detect_suspicious_shortcuts(episode_history: List[Dict]) -> Dict[str, float]:
+    """
+    Lightweight anti-cheat monitor for reward engineering.
+
+    Detects degenerate action loops that can inflate short-term reward without
+    meaningful portfolio management progress.
+    """
+    if not episode_history:
+        return {"shortcut_signals": 0, "repeat_ratio": 0.0}
+
+    actions = [s.get("action_type", "") for s in episode_history]
+    repeats = 0
+    for i in range(1, len(actions)):
+        if actions[i] == actions[i - 1]:
+            repeats += 1
+
+    repeat_ratio = repeats / max(1, len(actions) - 1)
+    distinct_actions = len(set(actions))
+    shortcut_signals = 0
+
+    if repeat_ratio > 0.55:
+        shortcut_signals += 1
+    if distinct_actions <= 3 and len(actions) > 25:
+        shortcut_signals += 1
+
+    return {
+        "shortcut_signals": shortcut_signals,
+        "repeat_ratio": round(repeat_ratio, 4),
     }
 
 

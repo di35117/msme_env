@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MSME-RL Environment Console</title>
+  <link rel="stylesheet" href="/web/assets/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>MSME-RL Environment Console</h1>
+        <p>Interactive control panel for reset, step, and state inspection.</p>
+      </div>
+      <div class="topbar-meta">
+        <span id="status-pill" class="pill pill-neutral">Not connected</span>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <h2>Episode Controls</h2>
+        <div class="row">
+          <button id="btn-reset" class="btn btn-primary">Reset Episode</button>
+          <button id="btn-state" class="btn">Refresh State</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Run Step</h2>
+        <div class="form-grid">
+          <label>
+            <span>Account ID</span>
+            <input id="account-id" type="number" min="1" max="30" value="1">
+          </label>
+          <label>
+            <span>Action Type</span>
+            <select id="action-type"></select>
+          </label>
+          <label class="full">
+            <span>Parameters (JSON)</span>
+            <textarea id="parameters" rows="4" placeholder='{"months":2}'>{}</textarea>
+          </label>
+          <label class="full">
+            <span>Reasoning</span>
+            <textarea id="reasoning" rows="3" placeholder="Why this action?"></textarea>
+          </label>
+        </div>
+        <div class="row">
+          <button id="btn-step" class="btn btn-primary">Submit Step</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Snapshot</h2>
+        <div id="kpi-grid" class="kpi-grid">
+          <div class="kpi"><span>Episode</span><strong id="k-episode">-</strong></div>
+          <div class="kpi"><span>Month</span><strong id="k-month">-</strong></div>
+          <div class="kpi"><span>Step Reward</span><strong id="k-step-reward">-</strong></div>
+          <div class="kpi"><span>Total Reward</span><strong id="k-total-reward">-</strong></div>
+          <div class="kpi"><span>NPA Rate</span><strong id="k-npa-rate">-</strong></div>
+          <div class="kpi"><span>Avg Trust</span><strong id="k-avg-trust">-</strong></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Last Action Result</h2>
+        <pre id="last-action" class="output">{}</pre>
+      </section>
+
+      <section class="card">
+        <h2>Alerts</h2>
+        <div class="alerts-wrap">
+          <div>
+            <h3>Cluster Alerts</h3>
+            <ul id="cluster-alerts" class="list"></ul>
+          </div>
+          <div>
+            <h3>Ecosystem Alerts</h3>
+            <ul id="ecosystem-alerts" class="list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Observation (Raw JSON)</h2>
+        <pre id="observation" class="output"></pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="/web/assets/app.js"></script>
+</body>
+</html>

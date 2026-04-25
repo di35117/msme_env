@@ -1,255 +1,77 @@
----
-title: Msmeenv Environment Server
-emoji: 📻
-colorFrom: pink
-colorTo: blue
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
----
+# MSME Linguistic Decoder RL Environment
 
-# Msmeenv Environment
+This repository implements an OpenEnv-compatible reinforcement learning environment for a
+domain-agnostic linguistic decoding agent, with MSME lending as the demonstration domain.
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+The goal is not to build a generic chatbot. The goal is to train a policy that learns how to act on
+behavioral language signals under uncertainty, using verifiable environment rewards.
 
-## Quick Start
+## Problem Framing
 
-The simplest way to use the Msmeenv environment is through the `MsmeenvEnv` class:
+- **Core module:** Domain-agnostic linguistic decoding (intent, distress, credibility, risk cues)
+- **Demo domain:** MSME + startup relationship-management decisions
+- **Training objective:** Reduce defaults while preserving trust and action appropriateness
 
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
+## Why This Is RL (Not Prompting)
 
-try:
-    # Create environment from Docker image
-    msmeEnvenv = MsmeenvEnv.from_docker_image("msmeEnv-env:latest")
+- **State:** Portfolio observables, memory context, network alerts, month progression
+- **Action:** Structured RM interventions (`action_type`, `account_id`, `parameters`)
+- **Reward:** Step + episode rewards from deterministic, auditable environment logic
+- **Episode:** Multi-step 36-month simulation horizon
+- **Policy update:** SFT warm start + GRPO-style post-training loop
 
-    # Reset
-    result = msmeEnvenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+## Environment Highlights
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = msmeEnvenv.step(MsmeenvAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    msmeEnvenv.close()
-```
-
-That's it! The `MsmeenvEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
-
-## Building the Docker Image
-
-Before using the environment, you need to build the Docker image:
-
-```bash
-# From project root
-docker build -t msmeEnv-env:latest -f server/Dockerfile .
-```
-
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**MsmeenvAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**MsmeenvObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Msmeenv environment server running, you can connect directly:
-
-```python
-from msmeEnv import MsmeenvEnv
-
-# Connect to existing server
-msmeEnvenv = MsmeenvEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = msmeEnvenv.reset()
-result = msmeEnvenv.step(MsmeenvAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `msmeEnvenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
-
-# Connect with context manager (auto-connects and closes)
-with MsmeenvEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(MsmeenvAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    MsmeenvEnvironment,  # Pass class, not instance
-    MsmeenvAction,
-    MsmeenvObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with MsmeenvEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(MsmeenvAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/msmeEnv_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
+- 20 MSME + 10 startup accounts in every episode
+- Hidden state vs observable proxies
+- Two linguistic behavior regimes:
+  - MSME understatement in local-language communication
+  - Startup overstatement in pitch-style communication
+- Cluster/ecosystem contagion and cross-contamination effects
+- Three-tier memory: working + episodic + semantic
 
 ## Project Structure
 
+- `server/msmeEnv_environment.py`: environment step/reset logic
+- `world_generator.py`: scenario generation and observables
+- `reward.py`: verifiable reward engineering
+- `memory.py`: three-tier memory system
+- `network.py`: contagion and network propagation
+- `train_grpo.py`: SFT warm start + RL training loop
+- `eval.py`: baseline vs policy evaluation on fixed seeds
+- `reward_audit.py`: reward-hacking diagnostics and audit checks
+- `FAQ_MAPPING.md`: explicit mapping to hackathon FAQ expectations
+
+## Quick Start
+
+```bash
+uv sync
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
 ```
-msmeEnv/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # MsmeenvEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── msmeEnv_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+
+In a second terminal:
+
+```bash
+python train_grpo.py --episodes 10 --port 8000 --output_dir ./msme_rl_checkpoints
+python eval.py --episodes 5 --seed 42
 ```
+
+## Evaluation Outputs
+
+`eval.py` emits policy-level metrics useful for judging:
+
+- NPA rate
+- Recovery rate
+- Relationship score
+- Tool appropriateness
+- Suspicious shortcut indicators
+
+## Deployment
+
+OpenEnv manifest:
+
+- `openenv.yaml`
+- runtime: FastAPI
+- app: `server.app:app`
+
+Use `openenv push` to deploy to Hugging Face Spaces.

@@ -110,6 +110,7 @@ class MSMERLEnvironment(Environment):
 
         # Episode histories for adversarial curriculum
         self._all_episode_histories: List[List[Dict]] = []
+        self._rolling_episode_rewards: List[float] = []
 
     # -------------------------------------------------------------------------
     # RESET
@@ -123,8 +124,13 @@ class MSMERLEnvironment(Environment):
         self._episode_num += 1
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
-        # Generate new portfolio
-        self._portfolio = generate_portfolio(episode=self._episode_num)
+        # Adaptive difficulty: reduce early difficulty when recent rewards are poor,
+        # increase when policy consistently performs well.
+        difficulty_override = self._compute_adaptive_difficulty()
+        self._portfolio = generate_portfolio(
+            episode=self._episode_num,
+            difficulty_override=difficulty_override,
+        )
         self._hidden_profiles = self._portfolio["hidden_profiles"]
         self._observable_states = self._portfolio["observable_states"]
 
@@ -174,6 +180,7 @@ class MSMERLEnvironment(Environment):
                 "msme_count": len(self._portfolio["msme_ids"]),
                 "startup_count": len(self._portfolio["startup_ids"]),
                 "episode": self._episode_num,
+                "difficulty_override": difficulty_override,
             },
         )
 
@@ -360,6 +367,9 @@ class MSMERLEnvironment(Environment):
                 final_month=36,
             )
             self._all_episode_histories.append(self._episode_history)
+            if episode_reward_breakdown:
+                self._rolling_episode_rewards.append(float(episode_reward_breakdown.get("total", 0.0)))
+                self._rolling_episode_rewards = self._rolling_episode_rewards[-10:]
 
         # 10. Build memory context for this observation
         episodic_ctx, semantic_ctx = self._memory.build_context(
@@ -611,3 +621,23 @@ class MSMERLEnvironment(Environment):
             reward=-0.01,
             metadata={"error": message},
         )
+
+    def _compute_adaptive_difficulty(self) -> Optional[float]:
+        """
+        Small RLVE-style controller to keep trajectories informative.
+
+        - No history: use generator default progression.
+        - Low rolling reward: ease slightly.
+        - Strong rolling reward: increase challenge.
+        """
+        if len(self._rolling_episode_rewards) < 3:
+            return None
+
+        avg_recent = sum(self._rolling_episode_rewards) / len(self._rolling_episode_rewards)
+        base = min(1.0, self._episode_num / 50.0)
+
+        if avg_recent < 0.25:
+            return max(0.1, base - 0.15)
+        if avg_recent > 0.65:
+            return min(1.0, base + 0.15)
+        return base

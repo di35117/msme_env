@@ -19,12 +19,29 @@ Or on Colab with Unsloth:
 import argparse
 import json
 import os
+import random
 import time
 from typing import Any, Dict, List
 
 from datasets import Dataset
 from trl import SFTTrainer
 from transformers import TrainingArguments
+
+
+def set_global_seed(seed: int) -> None:
+    random.seed(seed)
+    try:
+        import numpy as np
+        np.random.seed(seed)
+    except Exception:
+        pass
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -402,12 +419,15 @@ def run_training(
     max_steps_per_episode: int = 300,
     save_every_n_episodes: int = 10,
     output_dir: str = "./msme_rl_checkpoints",
+    seed: int = 42,
 ):
+    set_global_seed(seed)
     print(f"\n{'='*60}")
     print("MSME-RL GRPO TRAINING")
     print(f"Model: {model_name}")
     print(f"Episodes: {num_episodes}")
     print(f"Environment: http://localhost:{port}")
+    print(f"Seed: {seed}")
     print(f"{'='*60}\n")
 
     # ---- Load model ----
@@ -477,6 +497,7 @@ def run_training(
 
     episode_rewards: List[float] = []
     episode_losses: List[float] = []
+    episode_metrics: List[Dict[str, Any]] = []
     all_steps: List[Dict] = []
 
     for episode in range(1, num_episodes + 1):
@@ -493,6 +514,8 @@ def run_training(
         episode_step_data: List[Dict] = []
         step_count    = 0
         episode_done  = False
+        parse_errors = 0
+        action_counter: Dict[str, int] = {}
 
         while not episode_done and step_count < max_steps_per_episode:
             prompt      = build_agent_prompt(obs)
@@ -535,12 +558,14 @@ def run_training(
                     reasoning=action_data.get("reasoning", ""),
                 )
             except Exception:
+                parse_errors += 1
                 action = MSMERLAction(
                     action_type="wait_and_observe",
                     account_id=1,
                     parameters={},
                     reasoning="(parse error)",
                 )
+            action_counter[action.action_type] = action_counter.get(action.action_type, 0) + 1
 
             if use_direct:
                 obs_obj      = env.step(action)
@@ -603,6 +628,24 @@ def run_training(
                 f"ToolFit={ep_breakdown['tool_appropriateness']:.1%}"
             )
 
+        total_actions = max(1, sum(action_counter.values()))
+        top_action = max(action_counter.items(), key=lambda x: x[1])[0] if action_counter else "none"
+        top_action_ratio = (action_counter.get(top_action, 0) / total_actions) if action_counter else 0.0
+        episode_metrics.append({
+            "episode": episode,
+            "reward": round(float(episode_reward), 4),
+            "steps": step_count,
+            "parse_errors": parse_errors,
+            "distinct_actions": len(action_counter),
+            "top_action": top_action,
+            "top_action_ratio": round(top_action_ratio, 4),
+            "npa_rate": ep_breakdown.get("npa_rate") if ep_breakdown else None,
+            "recovery_rate": ep_breakdown.get("recovery_rate") if ep_breakdown else None,
+            "relationship_score": ep_breakdown.get("relationship_score") if ep_breakdown else None,
+            "tool_appropriateness": ep_breakdown.get("tool_appropriateness") if ep_breakdown else None,
+            "shortcut_penalty": ep_breakdown.get("shortcut_penalty") if ep_breakdown else None,
+        })
+
         # FIX 2: Mini-batching (Solves the OOM Crash)
         if len(all_steps) >= max_steps_per_episode:
             import torch
@@ -646,8 +689,12 @@ def run_training(
                         "rewards":  episode_rewards,
                         "losses": episode_losses, # Added losses to JSON
                     }, f)
+                with open(os.path.join(output_dir, "training_metrics.json"), "w") as f:
+                    json.dump(episode_metrics, f, indent=2)
                 _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
                 print(f"  Checkpoint saved: {ckpt_path}")
+            except Exception as e:
+                print(f"  Could not save checkpoint/metrics: {e}")
 
     # Final plot save (required for automated judging check)
     _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
@@ -840,6 +887,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_steps_per_episode",  type=int,  default=1080)
     parser.add_argument("--save_every",             type=int,  default=10)
     parser.add_argument("--output_dir",             type=str,  default="./msme_rl_checkpoints")
+    parser.add_argument("--seed",                   type=int,  default=42)
     args = parser.parse_args()
 
     run_training(
@@ -850,4 +898,5 @@ if __name__ == "__main__":
         max_steps_per_episode=args.max_steps_per_episode,
         save_every_n_episodes=args.save_every,
         output_dir=args.output_dir,
+        seed=args.seed,
     )

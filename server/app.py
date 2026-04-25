@@ -16,6 +16,11 @@ Usage:
     uv run --project . server
 """
 
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 try:
     from openenv.core.env_server.http_server import create_app
 except Exception as e:
