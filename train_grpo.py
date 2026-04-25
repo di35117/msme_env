@@ -626,6 +626,39 @@ def run_training(
     # SFT warm start before RL loop
     model = run_sft_warm_start(model, tokenizer, output_dir)
 
+    # Build a frozen reference model from the post-SFT weights for KL anchoring
+    # in GRPO updates. Three paths:
+    #   1. PEFT/LoRA: use disable_adapter context (no extra VRAM).
+    #   2. Full HF model: load a fp16/bf16 copy on the same device.
+    #   3. Either fails: KL is silently disabled and only entropy bonus is used.
+    print("Building reference policy for KL anchor...")
+    model._has_lora_ref = False
+    model._ref_model    = None
+    try:
+        if hasattr(model, "disable_adapter"):
+            model._has_lora_ref = True
+            print("  Using LoRA disable_adapter as reference (no extra VRAM).")
+        else:
+            import torch
+            from transformers import AutoModelForCausalLM
+            ref_dtype = (
+                torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+                else torch.float16
+            )
+            ref_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=ref_dtype,
+            )
+            ref_model.load_state_dict(model.state_dict(), strict=False)
+            ref_model.to(model.device)
+            ref_model.eval()
+            for p in ref_model.parameters():
+                p.requires_grad_(False)
+            model._ref_model = ref_model
+            print(f"  Reference model loaded on {model.device} ({ref_dtype}).")
+    except Exception as e:
+        print(f"  Reference model unavailable ({e}); KL anchor disabled, entropy bonus still applied.")
+
     # ---- Connect to environment ----
     # FIX: Fallback chain corrected — root-level import as final fallback
     use_direct = False
@@ -1186,6 +1219,16 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     total_loss_value = 0.0
     valid_samples = 0
 
+    import torch.nn.functional as F
+
+    # Loss = pg_loss + kl_coef * KL(current || reference) - ent_coef * entropy
+    # Coefficients chosen conservatively for a small (1.5B) model + small batch.
+    KL_COEF  = 0.05
+    ENT_COEF = 0.01
+
+    total_kl_value      = 0.0
+    total_entropy_value = 0.0
+
     for i, step_data in enumerate(batch):
         advantage  = advantages[i].item()
         full_text  = step_data["prompt"] + step_data["completion"]
@@ -1215,26 +1258,67 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             labels = enc["input_ids"].clone()
             labels[:, :prompt_len] = -100   # -100 = ignore in cross-entropy loss
 
-            outputs = model(**enc, labels=labels)
+            outputs      = model(**enc, labels=labels)
+            logits       = outputs.logits                       # [1, T, V]
+            shift_logits = logits[:, :-1, :].contiguous()       # predict token t from t-1
+            shift_labels = labels[:, 1:].contiguous()
+            shift_mask   = (shift_labels != -100).float()
+            mask_sum     = shift_mask.sum().clamp(min=1.0)
 
-            # GRPO objective: maximize E[reward * log_prob(completion)]
-            # outputs.loss = mean negative log-likelihood over completion tokens
-            # Multiply by -advantage: positive advantage -> minimise loss (increase prob)
-            #                         negative advantage -> maximise loss (decrease prob)
-            sample_loss = outputs.loss * (-advantage)
+            new_log_probs = F.log_softmax(shift_logits, dim=-1) # [1, T-1, V]
+            new_probs     = new_log_probs.exp()
+
+            # Entropy on completion tokens only.
+            entropy_per_token = -(new_probs * new_log_probs).sum(dim=-1)  # [1, T-1]
+            entropy_term      = (entropy_per_token * shift_mask).sum() / mask_sum
+
+            # KL(current || reference) on completion tokens.
+            ref_logits = None
+            if getattr(model, "_ref_model", None) is not None:
+                with torch.no_grad():
+                    ref_inputs = {k: v for k, v in enc.items() if k != "labels"}
+                    ref_logits = model._ref_model(**ref_inputs).logits
+            elif getattr(model, "_has_lora_ref", False):
+                try:
+                    with torch.no_grad():
+                        with model.disable_adapter():
+                            ref_inputs = {k: v for k, v in enc.items() if k != "labels"}
+                            ref_logits = model(**ref_inputs).logits
+                except Exception:
+                    ref_logits = None
+
+            if ref_logits is not None:
+                ref_shift_logits = ref_logits[:, :-1, :].contiguous().to(shift_logits.dtype)
+                ref_log_probs    = F.log_softmax(ref_shift_logits, dim=-1)
+                # Forward KL: sum_v p_new(v) * (log p_new(v) - log p_ref(v))
+                kl_per_token = (new_probs * (new_log_probs - ref_log_probs)).sum(dim=-1)
+                kl_term      = (kl_per_token * shift_mask).sum() / mask_sum
+            else:
+                kl_term = torch.tensor(0.0, device=logits.device)
+
+            # SIGN-CORRECTED policy gradient loss.
+            # Goal: maximize E[advantage * log_prob(completion)].
+            # Equivalent: minimize advantage * NLL = advantage * outputs.loss.
+            # The previous code multiplied by (-advantage), which flipped the
+            # gradient direction and was actually *decreasing* probability of
+            # high-advantage completions. This restores the correct sign.
+            pg_loss = outputs.loss * advantage
+
+            sample_loss = pg_loss + KL_COEF * kl_term - ENT_COEF * entropy_term
 
             # Memory-safe accumulation: backprop per sample instead of retaining
             # one large computation graph across the full mini-batch.
             sample_loss = sample_loss / len(batch)
             sample_loss.backward()
-            total_loss_value += float(sample_loss.detach().item())
+            total_loss_value    += float(sample_loss.detach().item())
+            total_kl_value      += float(kl_term.detach().item())
+            total_entropy_value += float(entropy_term.detach().item())
 
             valid_samples += 1
 
         except Exception as e:
             print(f"    Skipping sample {i}: {e}")
             if "out of memory" in str(e).lower():
-                # Try to recover and continue with the remaining samples.
                 torch.cuda.empty_cache()
             continue
 
@@ -1246,12 +1330,15 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         )
         optimizer.step()
 
-        pos_frac = (advantages > 0).float().mean().item()
+        pos_frac    = (advantages > 0).float().mean().item()
+        avg_kl      = total_kl_value / max(1, valid_samples)
+        avg_entropy = total_entropy_value / max(1, valid_samples)
         print(
             f"    GRPO update | n={valid_samples}/{len(batch)} | "
             f"loss={total_loss_value:.4f} | "
             f"mean_reward={raw_rewards.mean():.4f} | "
-            f"pos_frac={pos_frac:.1%}"
+            f"pos_frac={pos_frac:.1%} | "
+            f"KL={avg_kl:.4f} | H={avg_entropy:.3f}"
         )
     else:
         print("    GRPO update skipped: no valid samples")
