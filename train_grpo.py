@@ -99,7 +99,7 @@ REWARD SIGNAL:
 
 Respond with your action in this exact JSON format:
 {
-  "reasoning": "<your chain-of-thought: what signals you observed, what pattern matched, why this action>",
+  "reasoning": "<brief reason in 1-2 sentences based on observed signals>",
   "action_type": "<one of the 21 action types>",
   "account_id": <integer 1-30>,
   "parameters": {"months": 2}
@@ -144,12 +144,11 @@ def build_agent_prompt(observation: Dict) -> str:
 === TOP 5 ACCOUNTS NEEDING ATTENTION (by DPD) ===
 {urgent_str}
 
-Based on all of the above, decide your next action. Think through:
-1. Which account is most urgent?
-2. What do the behavioral signals (not the message content) tell you?
-3. What pattern from semantic memory applies?
-4. What is the appropriate tool for this account type?
-5. What are the network risks (cluster/ecosystem) of your action?
+Based on all of the above, decide your next action using behavioral signals:
+1. Identify the most urgent account.
+2. Match observed signals to known risk patterns.
+3. Choose a valid action for the account type.
+4. Keep reasoning concise (1-2 sentences).
 
 Respond with JSON only:"""
 
@@ -693,6 +692,20 @@ def run_training(
 
         return None
 
+    def _serialize_action_for_training(action: Any, fallback_reason: str = "") -> str:
+        """
+        Convert executed action object to strict JSON for RL targets.
+        This prevents reinforcing malformed raw generations.
+        """
+        reasoning = getattr(action, "reasoning", "") or fallback_reason or "Action selected from portfolio signals."
+        payload = {
+            "reasoning": str(reasoning),
+            "action_type": str(getattr(action, "action_type", "wait_and_observe")),
+            "account_id": max(1, min(30, int(getattr(action, "account_id", 1)))),
+            "parameters": getattr(action, "parameters", {}) if isinstance(getattr(action, "parameters", {}), dict) else {},
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
     def _recover_action_with_extractor(raw_text: str, observation: Dict) -> Any:
         """
         Second-pass recovery: ask model to output strict JSON only.
@@ -718,7 +731,7 @@ def run_training(
         with torch.no_grad():
             extractor_outputs = model.generate(
                 **extractor_inputs,
-                max_new_tokens=96,
+                max_new_tokens=160,
                 do_sample=False,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -773,6 +786,9 @@ def run_training(
         step_count    = 0
         episode_done  = False
         parse_failures = 0
+        first_pass_successes = 0
+        extractor_recoveries = 0
+        heuristic_fallbacks = 0
 
         while not episode_done and step_count < max_steps_per_episode:
             prompt      = build_agent_prompt(obs)
@@ -789,7 +805,7 @@ def run_training(
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=96,
+                    max_new_tokens=160,
                     do_sample=False,
                     pad_token_id=tokenizer.eos_token_id,
                 )
@@ -801,6 +817,7 @@ def run_training(
                 print("  Debug generation sample:", repr(generated[:240]))
 
             # Parse action — strip markdown fences if present
+            completion_for_training = generated
             try:
                 action = _parse_action_from_text(generated, obs)
                 if action is None:
@@ -808,12 +825,21 @@ def run_training(
                     recovered = _recover_action_with_extractor(generated, obs)
                     if recovered is None:
                         parse_failures += 1
+                        heuristic_fallbacks += 1
                         action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
+                        completion_for_training = _serialize_action_for_training(action, "(parse fallback heuristic)")
                     else:
+                        extractor_recoveries += 1
                         action = recovered
+                        completion_for_training = _serialize_action_for_training(action)
+                else:
+                    first_pass_successes += 1
+                    completion_for_training = _serialize_action_for_training(action)
             except Exception:
                 parse_failures += 1
+                heuristic_fallbacks += 1
                 action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
+                completion_for_training = _serialize_action_for_training(action, "(parse fallback heuristic)")
 
             if use_direct:
                 obs_obj      = env.step(action)
@@ -836,7 +862,7 @@ def run_training(
 
             episode_step_data.append({
                 "prompt":      full_prompt,
-                "completion":  generated,
+                "completion":  completion_for_training,
                 "step_reward": step_reward,
             })
             step_count += 1
@@ -878,6 +904,12 @@ def run_training(
         print(
             f"    Parse failures: {parse_failures}/{step_count} "
             f"({(parse_failures / max(1, step_count)):.1%})"
+        )
+        print(
+            f"    Parse breakdown | "
+            f"first_pass={first_pass_successes}/{step_count} ({(first_pass_successes / max(1, step_count)):.1%}) | "
+            f"extractor={extractor_recoveries}/{step_count} ({(extractor_recoveries / max(1, step_count)):.1%}) | "
+            f"fallback={heuristic_fallbacks}/{step_count} ({(heuristic_fallbacks / max(1, step_count)):.1%})"
         )
         if episode <= 2 and (parse_failures / max(1, step_count)) > 0.80:
             print("    WARNING: parse-failure ratio is very high; stop run and tune output control.")
