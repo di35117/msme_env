@@ -106,6 +106,60 @@ Respond with your action in this exact JSON format:
 }"""
 
 
+# Canonical set of valid action_type strings. Keep in sync with the env action enum.
+# Used by the parser to snap near-miss model outputs (e.g. "call_guarantor",
+# "call_promoter_foundier") to the closest valid action by edit distance.
+VALID_ACTIONS = (
+    "send_empathetic_reminder",
+    "send_firm_reminder",
+    "send_legal_notice_section13",
+    "call_promoter_founder",
+    "call_guarantor_investor",
+    "conduct_cluster_ecosystem_visit",
+    "grant_moratorium",
+    "restructure_emi",
+    "offer_eclgs_topup",
+    "offer_bridge_loan_extension",
+    "accept_partial_payment",
+    "waive_penal_interest",
+    "initiate_sarfaesi",
+    "refer_to_recovery_agent",
+    "file_drt_case",
+    "offer_one_time_settlement",
+    "verify_gst_returns",
+    "pull_bank_statements",
+    "check_industry_cluster_stress",
+    "request_investor_update_meeting",
+    "check_startup_ecosystem_signals",
+    "wait_and_observe",
+)
+
+
+def _snap_to_valid_action(name: str) -> str:
+    """
+    Return the closest valid action_type to `name`. Uses substring containment
+    first (cheap, exact-prefix matches), then SequenceMatcher ratio.
+    Falls back to 'wait_and_observe' when no candidate scores above 0.55.
+    """
+    if not isinstance(name, str):
+        return "wait_and_observe"
+    norm = name.strip().lower()
+    if not norm:
+        return "wait_and_observe"
+    if norm in VALID_ACTIONS:
+        return norm
+    contains = [a for a in VALID_ACTIONS if norm in a or a in norm]
+    if len(contains) == 1:
+        return contains[0]
+    from difflib import SequenceMatcher
+    best, best_score = "wait_and_observe", 0.0
+    for cand in VALID_ACTIONS:
+        score = SequenceMatcher(None, norm, cand).ratio()
+        if score > best_score:
+            best, best_score = cand, score
+    return best if best_score >= 0.55 else "wait_and_observe"
+
+
 def build_agent_prompt(observation: Dict) -> str:
     """
     Compact prompt designed for small LMs (0.5B-1.7B).
@@ -512,7 +566,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 def run_training(
     num_episodes: int = 300,
     port: int = 8000,
-    model_name: str = "Qwen/Qwen3-1.7B",
+    model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
     use_unsloth: bool = True,
     max_steps_per_episode: int = 300,
     save_every_n_episodes: int = 10,
@@ -681,10 +735,19 @@ def run_training(
                 candidates.append(block)
 
         def _build_action(data: Dict[str, Any]) -> Any:
+            raw_type = data.get("action_type", "wait_and_observe")
+            action_type = _snap_to_valid_action(str(raw_type))
+            try:
+                account_id_int = int(str(data.get("account_id", 1)).strip())
+            except Exception:
+                account_id_int = 1
+            params = data.get("parameters", {})
+            if not isinstance(params, dict):
+                params = {}
             return MSMERLAction(
-                action_type=str(data.get("action_type", "wait_and_observe")),
-                account_id=max(1, min(30, int(data.get("account_id", 1)))),
-                parameters=data.get("parameters", {}) if isinstance(data.get("parameters", {}), dict) else {},
+                action_type=action_type,
+                account_id=max(1, min(30, account_id_int)),
+                parameters=params,
                 reasoning=str(data.get("reasoning", "")),
             )
 
@@ -706,10 +769,10 @@ def run_training(
         action_match = re.search(r"(action_type|action)\s*[:=]\s*['\"]?([a-zA-Z0-9_]+)['\"]?", clean)
         account_match = re.search(r"(account_id|account)\s*[:=]\s*([0-9]+)", clean)
         if action_match:
-            action_type = action_match.group(2)
+            raw_action = action_match.group(2)
             account_id = int(account_match.group(2)) if account_match else 1
             return MSMERLAction(
-                action_type=action_type,
+                action_type=_snap_to_valid_action(raw_action),
                 account_id=max(1, min(30, account_id)),
                 parameters={},
                 reasoning="(regex-recovered)",
@@ -730,7 +793,7 @@ def run_training(
         if not isinstance(params, dict):
             params = {}
         payload = {
-            "action_type": str(getattr(action, "action_type", "wait_and_observe")),
+            "action_type": _snap_to_valid_action(str(getattr(action, "action_type", "wait_and_observe"))),
             "account_id": max(1, min(30, int(getattr(action, "account_id", 1)))),
             "parameters": params,
             "reasoning": str(reasoning),
@@ -864,12 +927,17 @@ def run_training(
 
             # Generation must run in eval mode. After the first GRPO update
             # model.train() is left on, which can degrade greedy generation.
+            # Sampled (do_sample=True, temperature=0.7) decoding is required for
+            # RL exploration — greedy decoding collapsed to one action per episode.
+            # JSON prefill keeps format adherence even with sampling.
             model.eval()
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=220,
-                    do_sample=False,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
                     repetition_penalty=1.15,
                     no_repeat_ngram_size=4,
                     pad_token_id=tokenizer.eos_token_id,
@@ -951,11 +1019,20 @@ def run_training(
                     f"Cum.R={summary.get('cumulative_reward', 0):.3f}"
                 )
 
-        # Episode reward
-        # Episode reward
-        last_result       = obs.get("last_action_result", {})
-        ep_breakdown      = last_result.get("episode_reward_breakdown") if last_result else None
-        episode_reward    = ep_breakdown["total"] if ep_breakdown else obs.get("episode_reward_so_far", 0.0)
+        # Episode reward.
+        # Real cumulative reward lives in portfolio_summary.cumulative_reward.
+        # The previous fallback used obs.get("episode_reward_so_far", 0.0) which
+        # is never populated by this env, so RL always saw 0 terminal signal.
+        last_result    = obs.get("last_action_result", {}) or {}
+        ep_breakdown   = last_result.get("episode_reward_breakdown") if last_result else None
+        portfolio_sum  = obs.get("portfolio_summary", {}) or {}
+        episode_reward = (
+            ep_breakdown["total"] if ep_breakdown
+            else portfolio_sum.get(
+                "cumulative_reward",
+                obs.get("episode_reward_so_far", 0.0),
+            )
+        )
         episode_rewards.append(episode_reward)
 
         # FIX 1: Discounted Return-to-Go (Solves the Vanishing Reward)
@@ -1234,7 +1311,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MSME-RL GRPO Training")
     parser.add_argument("--episodes",               type=int,  default=300)
     parser.add_argument("--port",                   type=int,  default=8000)
-    parser.add_argument("--model",                  type=str,  default="Qwen/Qwen3-1.7B")
+    parser.add_argument("--model",                  type=str,  default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--no-unsloth",             action="store_true")
     parser.add_argument("--max_steps_per_episode",  type=int,  default=1080)
     parser.add_argument("--save_every",             type=int,  default=10)
