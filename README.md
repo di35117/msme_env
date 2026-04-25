@@ -118,6 +118,92 @@ Hard-number objective (no LLM judge), combining:
 
 ---
 
+## Anti-Reward-Hacking Design
+
+A reward function is only as good as the loopholes it doesn't have. The reward
+in `reward.py` is built around a simple principle: **every shortcut that would
+make the agent look good without actually helping a borrower has an explicit
+counter-penalty**. Below are the four mechanisms a judge can verify by reading
+`reward.py` directly — all values are constants in the same file.
+
+### 1) Cluster-cascade penalty (prevents over-aggression)
+
+`STEP_REWARDS["cluster_cascade_default"] = -0.25`
+
+MSME borrowers in this environment are connected by a cluster topology
+(`network.py`). If the agent over-uses coercive tools (e.g. `initiate_sarfaesi`)
+on a borrower with high `cluster_centrality`, it can trigger a *cascade
+default* across linked accounts — and the agent eats a `-0.25` step penalty
+**per cascading account**, dwarfing the `-0.18` it would have gotten for letting
+that single account become NPA. This rules out the "be maximally aggressive,
+recover the loan, ignore the rest of the cluster" strategy.
+
+A small *information bonus* (`+0.03`) is also given for running
+`verify_gst_returns`, `pull_bank_statements`, or `check_industry_cluster_stress`
+**before** acting on a high-centrality account, so the gradient nudges toward
+"check first, then decide" instead of trigger-happy behavior.
+
+### 2) SARFAESI-on-startup penalty (prevents wrong-tool abuse)
+
+`STEP_REWARDS["sarfaesi_used_on_startup"] = -0.15`
+
+SARFAESI is a collateral-recovery tool designed for asset-backed MSMEs. Using
+it on a startup is *legally permissible but operationally insane* — startups
+have no real collateral, founders walk, and ecosystem trust collapses. The
+agent therefore incurs a `-0.15` step penalty *in addition to* the normal
+account-NPA penalty whenever it fires SARFAESI on an `account_type == "startup"`
+(see `compute_step_reward`, line 87). The correct startup-side action,
+`schedule_investor_meeting_check_in`, carries a `+0.10` bonus when used on a
+genuinely stressed startup (`investor_meeting_triggered_bridge`). The reward
+gap (`+0.10` vs `-0.15` ≈ 0.25 swing per step) makes wrong-tool behavior
+strictly dominated by right-tool behavior in expectation.
+
+### 3) Episode-level shortcut penalty (`_compute_shortcut_penalty`)
+
+`reward.py:350` runs four deterministic checks at episode end that catch the
+most common RL exploits we saw during ablations:
+
+| Pathology               | Trigger                                          | Coefficient |
+|-------------------------|--------------------------------------------------|-------------|
+| **No-op farming**       | `wait_and_observe` ratio above 30%               | `(ratio - 0.30) * 0.50` |
+| **Malformed-JSON abuse**| `format_error` ratio                             | `ratio * 0.60` |
+| **Action spamming**     | One action used in more than 35% of all steps    | `(ratio - 0.35) * 0.40` |
+| **Account thrashing**   | More than 70% target-switches between steps      | `(ratio - 0.70) * 0.25` |
+
+The total is capped at `0.25` and subtracted from the episode reward, so even
+a perfect raw score is wiped out by extreme degenerate behavior. This prevents
+the most common GRPO failure mode: the model finds a single line of safe text
+that always parses, repeats it 60 times, and looks "correct" without making
+any actual decisions.
+
+### 4) Action-frequency cap on positive rewards
+
+In `compute_episode_reward` (line 299) the positive contribution from any
+single action type is capped after the third use:
+
+```python
+if action_frequency[action_type] <= 3:
+    R += positive_reward
+```
+
+This means even if the model finds a genuinely high-reward action, it cannot
+spam it 60 times to inflate the episode return — the 4th, 5th, ... uses
+contribute 0 to the positive side while still being subject to negative
+penalties. Combined with mechanism (3), this means **the only way to get a
+high episode reward is to use a diverse set of contextually-appropriate
+actions** — exactly the behavior the environment is supposed to teach.
+
+### Auditability
+
+The function `_build_anti_cheat_metrics` (`reward.py:386`) emits per-episode
+counters for every one of the above (no-op rate, malformed rate, dominant
+action share, switch ratio, SARFAESI-on-startup count, etc.) into the episode
+summary. These are the same numbers a judge can re-derive by replaying any
+saved episode log — so the anti-hacking claim is not just a design statement,
+it is a runtime invariant exposed in `judge_summary.json`.
+
+---
+
 ## OpenEnv Compliance
 
 The environment remains OpenEnv-compliant:
@@ -185,8 +271,10 @@ py -3 scripts/pre_submit_check.py
 
 Commit these generated files:
 
-- `artifacts/training_reward_curve.png`
-- `artifacts/training_loss_curve.png`
+- `msme_rl_checkpoints/reward_curve.png` — headline reward curve
+- `msme_rl_checkpoints/training_metrics.png` — **multi-metric dashboard (Reward / Loss / KL / Entropy / Parse-failure %)**
+- `msme_rl_checkpoints/loss_curve.png`
+- `msme_rl_checkpoints/reward_curve.json` — raw per-episode metrics for re-rendering
 - `artifacts/reward_distribution_base_vs_trained.png`
 - `artifacts/per_episode_base_vs_trained.png`
 - `artifacts/judge_summary.json`
@@ -198,8 +286,23 @@ Commit these generated files:
 These cover the typical judging asks:
 - reward improvement,
 - policy loss behavior,
+- **multiple monitored metrics (FAQ Q17): KL vs SFT reference + completion-token entropy + parse-failure % alongside reward**,
 - base-vs-trained evidence,
 - reproducibility manifest.
+
+### What the multi-metric dashboard shows
+
+`training_metrics.png` is a 2x3 grid produced by `_save_reward_plot` in
+`train_grpo.py`:
+
+| Panel | Metric                                | What a healthy run looks like |
+|-------|---------------------------------------|-------------------------------|
+| (0,0) | Per-episode reward                    | Trends upward over episodes  |
+| (0,1) | Rolling-mean reward                   | Smoothed upward trend         |
+| (0,2) | GRPO policy loss (per-episode mean)   | Hovers around 0, not exploding |
+| (1,0) | KL vs frozen SFT reference            | Bounded — the KL anchor (`KL_COEF=0.05`) keeps the policy from drifting off the format manifold |
+| (1,1) | Completion token entropy              | Stays clearly above 0 — entropy bonus (`ENT_COEF=0.01`) prevents mode collapse |
+| (1,2) | Parse-failure %                       | Drops to ≈ 0% within the first few episodes thanks to the JSON prefill + extractor fallback |
 
 ---
 
