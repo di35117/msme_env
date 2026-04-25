@@ -213,11 +213,16 @@ def build_agent_prompt(observation: Dict) -> str:
         last_r    = last.get("step_reward", "")
         last_line = f"\nLast action: outcome={outcome} reward={last_r}"
 
+    most_urgent_id   = urgent[0].get("account_id", 1) if urgent else 1
+    most_urgent_type = urgent[0].get("account_type", "msme") if urgent else "msme"
+
     return (
         f"Month {month}/36. NPA={npa_rate:.1%}. CumReward={cum_r:.3f}.{last_line}\n"
         f"Alerts: {alert_str}\n"
         f"Top urgent accounts:\n{acct_block}\n\n"
-        f"Choose the single best action for the most urgent account. "
+        f"Most urgent account: id={most_urgent_id} type={most_urgent_type}.\n"
+        f"Choose the single best action for THIS account "
+        f"(set account_id={most_urgent_id} in your JSON). "
         f"Respond with one JSON object only."
     )
 
@@ -1164,7 +1169,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             return
         model._grpo_optimizer = torch.optim.AdamW(
             trainable,
-            lr=3e-6,
+            lr=1e-5,
             weight_decay=0.01,
         )
         print("    GRPO optimizer initialized")
