@@ -648,6 +648,8 @@ def run_training(
                     }, f)
                 _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
                 print(f"  Checkpoint saved: {ckpt_path}")
+            except Exception as e:
+                print(f"  Checkpoint save failed at episode {episode}: {e}")
 
     # Final plot save (required for automated judging check)
     _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
