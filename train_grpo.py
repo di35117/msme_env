@@ -645,10 +645,16 @@ def run_training(
         clean = clean.strip()
 
         candidates = [clean]
+        # Collect non-greedy JSON-like spans to avoid swallowing long text.
+        for span in re.findall(r"\{.*?\}", clean, flags=re.DOTALL):
+            if span not in candidates:
+                candidates.append(span)
         lidx = clean.find("{")
         ridx = clean.rfind("}")
         if lidx != -1 and ridx != -1 and ridx > lidx:
-            candidates.append(clean[lidx : ridx + 1])
+            block = clean[lidx : ridx + 1]
+            if block not in candidates:
+                candidates.append(block)
 
         def _build_action(data: Dict[str, Any]) -> Any:
             return MSMERLAction(
@@ -687,14 +693,53 @@ def run_training(
 
         return None
 
+    def _recover_action_with_extractor(raw_text: str, observation: Dict) -> Any:
+        """
+        Second-pass recovery: ask model to output strict JSON only.
+        This is triggered only when first-pass parsing fails.
+        """
+        extractor_user = (
+            "Convert the following model output into STRICT JSON only.\n"
+            "Rules:\n"
+            "1) Output exactly one JSON object.\n"
+            "2) Keys: action_type, account_id, parameters, reasoning.\n"
+            "3) account_id must be integer 1..30.\n"
+            "4) No markdown, no explanations, no <think> tags.\n\n"
+            f"MODEL_OUTPUT:\n{raw_text}\n"
+        )
+        extractor_prompt = _build_full_prompt(extractor_user)
+        import torch
+        extractor_inputs = tokenizer(
+            extractor_prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=2048,
+        ).to(model.device)
+        with torch.no_grad():
+            extractor_outputs = model.generate(
+                **extractor_inputs,
+                max_new_tokens=96,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        extractor_generated = tokenizer.decode(
+            extractor_outputs[0][extractor_inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True,
+        )
+        return _parse_action_from_text(extractor_generated, observation)
+
     def _build_full_prompt(user_prompt: str) -> str:
         """
         Build model input using tokenizer chat template when available.
         Falls back to manual role tags for older tokenizers.
         """
+        no_think_hint = (
+            "CRITICAL OUTPUT RULE: Do NOT emit <think> or hidden reasoning tags. "
+            "Return only final structured JSON."
+        )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": f"/no_think\n{no_think_hint}\n\n{user_prompt}"},
         ]
         if hasattr(tokenizer, "apply_chat_template"):
             try:
@@ -759,8 +804,13 @@ def run_training(
             try:
                 action = _parse_action_from_text(generated, obs)
                 if action is None:
-                    parse_failures += 1
-                    action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
+                    # Second-pass structured extractor before heuristic fallback.
+                    recovered = _recover_action_with_extractor(generated, obs)
+                    if recovered is None:
+                        parse_failures += 1
+                        action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
+                    else:
+                        action = recovered
             except Exception:
                 parse_failures += 1
                 action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
@@ -829,6 +879,8 @@ def run_training(
             f"    Parse failures: {parse_failures}/{step_count} "
             f"({(parse_failures / max(1, step_count)):.1%})"
         )
+        if episode <= 2 and (parse_failures / max(1, step_count)) > 0.80:
+            print("    WARNING: parse-failure ratio is very high; stop run and tune output control.")
         
         if ep_breakdown:
             print(
