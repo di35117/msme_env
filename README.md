@@ -161,10 +161,22 @@ py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 --output artifac
 py -3 scripts/check_domain_registry.py
 ```
 
+### 6) Run baseline comparison report (no training required)
+
+```bash
+py -3 scripts/eval.py --episodes 5 --output artifacts/eval_report.json
+```
+
 Optional if pytest is installed:
 
 ```bash
 py -3 -m pytest tests/test_domain_registry.py
+```
+
+### 7) Run pre-submit readiness checker
+
+```bash
+py -3 scripts/pre_submit_check.py
 ```
 
 ---
@@ -181,6 +193,7 @@ Commit these generated files:
 - `artifacts/judge_manifest.json`
 - `artifacts/deterministic_eval.json`
 - `artifacts/baseline_rewards.json`
+- `artifacts/eval_report.json`
 
 These cover the typical judging asks:
 - reward improvement,
@@ -221,9 +234,11 @@ msmeEnv/
 │
 ├── scripts/
 │   ├── run_baseline_eval.py
+│   ├── eval.py
 │   ├── run_deterministic_eval.py
 │   ├── generate_judge_artifacts.py
-│   └── check_domain_registry.py
+│   ├── check_domain_registry.py
+│   └── pre_submit_check.py
 │
 └── tests/
     └── test_domain_registry.py
@@ -253,3 +268,17 @@ uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
 - `world_generator.py` is still actively used (via the domain adapter).
 - `train_grpo.py` remains the main training entrypoint at repo root.
 - The adapter layer was added to generalize architecture without breaking current behavior.
+
+## Evaluation Files (What each does)
+
+- `scripts/eval.py`: compares random vs heuristic baselines and writes `artifacts/eval_report.json`.
+- `scripts/run_baseline_eval.py`: generates baseline episode rewards only (`baseline_rewards.json`).
+- `scripts/run_deterministic_eval.py`: fixed-seed reproducibility probe (`deterministic_eval.json`).
+- `scripts/generate_judge_artifacts.py`: turns reward/loss JSON into judge-facing plots and summary files.
+
+## Do We Need `inference.py`?
+
+Not required for judging.
+
+You only need an `inference.py` if you want a dedicated script to run a saved checkpoint policy for demo or offline comparison.  
+For current submission goals, environment server + eval scripts are sufficient.
