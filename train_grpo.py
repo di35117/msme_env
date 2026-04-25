@@ -20,10 +20,11 @@ import argparse
 import json
 import os
 import time
+import pathlib
+import inspect
 from typing import Any, Dict, List
 
 from datasets import Dataset
-from trl import SFTTrainer
 from transformers import TrainingArguments
 
 
@@ -150,6 +151,27 @@ Respond with JSON only:"""
 #   3. All account_id values capped at max 30
 # ---------------------------------------------------------------------------
 
+def _safe_import_sft_trainer():
+    """
+    Import TRL's SFTTrainer with a Windows-safe UTF-8 fallback.
+
+    Some Windows locales default to cp1252, while TRL reads template files with
+    Path.read_text() and no explicit encoding. This shim forces UTF-8 when the
+    encoding is omitted, preventing UnicodeDecodeError on import.
+    """
+    original_read_text = pathlib.Path.read_text
+
+    def _utf8_read_text(self, encoding=None, errors=None, newline=None):
+        return original_read_text(self, encoding=encoding or "utf-8", errors=errors, newline=newline)
+
+    pathlib.Path.read_text = _utf8_read_text  # type: ignore[assignment]
+    try:
+        from trl import SFTTrainer  # noqa: WPS433
+        return SFTTrainer, None
+    except Exception as exc:  # noqa: BLE001
+        return None, exc
+
+
 def run_sft_warm_start(model, tokenizer, output_dir):
     """
     SFT warm start: gives the model a sensible starting policy before GRPO begins.
@@ -157,6 +179,11 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     Without this, early GRPO rollouts are nearly random and convergence takes much longer.
     """
     print("Starting SFT Warm Start...")
+    SFTTrainer, sft_import_error = _safe_import_sft_trainer()
+    if SFTTrainer is None:
+        print(f"Skipping SFT warm start: could not import TRL SFTTrainer ({sft_import_error})")
+        print("Continuing with RL-only startup for this run.")
+        return model
 
     raw_data = []
 
@@ -367,23 +394,31 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     print(f"  SFT dataset: {len(sft_dataset)} examples")
 
-    trainer = SFTTrainer(
-        model=model,
-        train_dataset=sft_dataset,
-        dataset_text_field="text",   # FIX: was "prompt" — must be the combined field
-        max_seq_length=1024,
-        tokenizer=tokenizer,
-        args=TrainingArguments(
-            output_dir=os.path.join(output_dir, "sft_warmstart"),
-            per_device_train_batch_size=4,
-            num_train_epochs=3,
-            learning_rate=2e-5,
-            logging_steps=5,
-            save_strategy="no",
-            fp16=True,
-            report_to="none",
-        ),
+    sft_args = TrainingArguments(
+        output_dir=os.path.join(output_dir, "sft_warmstart"),
+        per_device_train_batch_size=4,
+        num_train_epochs=3,
+        learning_rate=2e-5,
+        logging_steps=5,
+        save_strategy="no",
+        fp16=True,
+        report_to="none",
     )
+
+    # TRL API differs by version. Build kwargs based on supported parameters.
+    trainer_kwargs = {
+        "model": model,
+        "train_dataset": sft_dataset,
+        "tokenizer": tokenizer,
+        "args": sft_args,
+    }
+    sft_signature = inspect.signature(SFTTrainer.__init__)
+    if "dataset_text_field" in sft_signature.parameters:
+        trainer_kwargs["dataset_text_field"] = "text"
+    if "max_seq_length" in sft_signature.parameters:
+        trainer_kwargs["max_seq_length"] = 1024
+
+    trainer = SFTTrainer(**trainer_kwargs)
 
     trainer.train()
     print("SFT Warm Start complete.")
