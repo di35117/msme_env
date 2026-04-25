@@ -17,6 +17,7 @@ Or on Colab with Unsloth:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import time
@@ -577,6 +578,12 @@ def run_training(
     episode_losses: List[float] = []
     all_steps: List[Dict] = []
 
+    def _resolve_maybe_await(value):
+        """Resolve awaitables for newer async EnvClient APIs."""
+        if inspect.isawaitable(value):
+            return asyncio.run(value)
+        return value
+
     for episode in range(1, num_episodes + 1):
         print(f"\n--- Episode {episode}/{num_episodes} ---")
         episode_start = time.time()
@@ -585,7 +592,7 @@ def run_training(
             obs_obj = env.reset()
             obs = obs_obj.__dict__ if hasattr(obs_obj, "__dict__") else {}
         else:
-            result = env.reset()
+            result = _resolve_maybe_await(env.reset())
             obs = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
 
         episode_step_data: List[Dict] = []
@@ -646,7 +653,7 @@ def run_training(
                 step_reward  = obs.get("step_reward", 0.0)
                 episode_done = obs.get("done", False)
             else:
-                result       = env.step(action)
+                result       = _resolve_maybe_await(env.step(action))
                 obs          = result.observation.__dict__ if hasattr(result.observation, "__dict__") else {}
                 step_reward  = result.reward or 0.0
                 episode_done = result.done
