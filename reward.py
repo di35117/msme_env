@@ -31,7 +31,7 @@ STEP_REWARDS: Dict[str, float] = {
     "investor_meeting_triggered_bridge":          +0.10,
     "information_verified_genuine_stress":        +0.04,
     "ghost_prevented_early_intervention":         +0.06,
-
+    "malformed_json_format":                      -0.15,
     # --- Universal bad outcomes ---
     "account_npa_no_intervention":                -0.18,
     "cluster_cascade_default":                    -0.25,
@@ -116,6 +116,8 @@ def classify_action_outcome(
 
     This is where the environment's hidden state drives the reward signal.
     """
+    if action_type == "format_error":
+        return "malformed_json_format"
     health   = hidden_profile.get("true_financial_health", 0.5)
     runway   = hidden_profile.get("true_runway_months", 12)
     strategic_default = hidden_profile.get("strategic_default_propensity", 0) > 0.5
