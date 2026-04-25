@@ -15,6 +15,7 @@ Episode rewards: NPA rate + recovery rate + relationship score + tool appropriat
 """
 
 import random
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 
@@ -302,10 +303,25 @@ def compute_episode_reward(
 
     tool_appropriateness = max(0.0, appropriate_actions / total_actions)
 
-    # FIXED: Binary reward curriculum for early episodes to prevent signal oscillation
+    # Anti-hacking penalty (independent signal):
+    # penalize exploit-like behavior such as no-op farming, repeated invalid/format
+    # actions, single-action spamming, and account-thrashing patterns.
+    shortcut_penalty = _compute_shortcut_penalty(episode_history)
+
+    # Anti-cheat audit metrics for deterministic inspection/reporting.
+    anti_cheat_metrics = _build_anti_cheat_metrics(episode_history)
+
+    # Curriculum with smooth transition to avoid brittle early binary behavior.
     if episode_num < 30:
-        # Phase 1: Pure survival. 1.0 if NPA rate is 0, else heavily penalize.
-        R = 1.0 if npa_rate == 0 else (0.1 - npa_rate)
+        progress = max(0.0, min(1.0, episode_num / 30.0))
+        survival_signal = 1.0 if npa_rate == 0 else (0.1 - npa_rate)
+        shaped_signal = (
+            0.40 * (1.0 - npa_rate) +
+            0.30 * recovery_rate +
+            0.20 * relationship_score +
+            0.10 * tool_appropriateness
+        )
+        R = ((1.0 - progress) * survival_signal) + (progress * shaped_signal)
     else:
         # Phase 2: Complex shaping
         R = (
@@ -314,6 +330,9 @@ def compute_episode_reward(
             0.20 * relationship_score         +
             0.10 * tool_appropriateness
         )
+        # Keep this explicit and bounded so the anti-hack channel is visible
+        # while not completely dominating primary objective metrics.
+        R -= min(0.25, shortcut_penalty)
 
     return {
         "total":                round(R, 4),
@@ -321,8 +340,85 @@ def compute_episode_reward(
         "recovery_rate":        round(recovery_rate, 4),
         "relationship_score":   round(relationship_score, 4),
         "tool_appropriateness": round(tool_appropriateness, 4),
+        "shortcut_penalty":     round(shortcut_penalty, 4),
+        "anti_cheat_metrics":   anti_cheat_metrics,
         "npa_count":            npa_accounts,
         "total_accounts":       total_accounts,
+    }
+
+
+def _compute_shortcut_penalty(episode_history: List[Dict[str, Any]]) -> float:
+    """Compute penalty for common reward-hacking / degenerate behavior patterns."""
+    if not episode_history:
+        return 0.0
+
+    total_steps = len(episode_history)
+    action_counter = Counter(step.get("action_type", "") for step in episode_history)
+    no_op_count = action_counter.get("wait_and_observe", 0)
+    malformed_count = action_counter.get("format_error", 0)
+
+    # 1) No-op farming.
+    no_op_ratio = no_op_count / total_steps
+    no_op_penalty = max(0.0, no_op_ratio - 0.30) * 0.50
+
+    # 2) Format/invalid output abuse.
+    malformed_penalty = (malformed_count / total_steps) * 0.60
+
+    # 3) Action spamming (same action repeated excessively).
+    dominant_ratio = max(action_counter.values()) / total_steps if action_counter else 0.0
+    spam_penalty = max(0.0, dominant_ratio - 0.35) * 0.40
+
+    # 4) Account thrashing: rapid target switching across consecutive steps.
+    switches = 0
+    prev_account = None
+    for step in episode_history:
+        account_id = step.get("account_id")
+        if prev_account is not None and account_id != prev_account:
+            switches += 1
+        prev_account = account_id
+    switch_ratio = switches / max(1, total_steps - 1)
+    # A high switch ratio can indicate shallow probing with no follow-through.
+    thrash_penalty = max(0.0, switch_ratio - 0.70) * 0.25
+
+    return round(no_op_penalty + malformed_penalty + spam_penalty + thrash_penalty, 4)
+
+
+def _build_anti_cheat_metrics(episode_history: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Deterministic anti-cheat counters for judge-facing audits."""
+    if not episode_history:
+        return {
+            "no_op_ratio": 0.0,
+            "format_error_ratio": 0.0,
+            "dominant_action_ratio": 0.0,
+            "account_switch_ratio": 0.0,
+            "same_account_repeat_ratio": 0.0,
+        }
+
+    total_steps = len(episode_history)
+    action_counter = Counter(step.get("action_type", "") for step in episode_history)
+    no_op_ratio = action_counter.get("wait_and_observe", 0) / total_steps
+    format_error_ratio = action_counter.get("format_error", 0) / total_steps
+    dominant_action_ratio = max(action_counter.values()) / total_steps if action_counter else 0.0
+
+    switches = 0
+    repeats_same_account = 0
+    prev_account = None
+    for step in episode_history:
+        account_id = step.get("account_id")
+        if prev_account is not None:
+            if account_id != prev_account:
+                switches += 1
+            else:
+                repeats_same_account += 1
+        prev_account = account_id
+
+    denom = max(1, total_steps - 1)
+    return {
+        "no_op_ratio": round(no_op_ratio, 4),
+        "format_error_ratio": round(format_error_ratio, 4),
+        "dominant_action_ratio": round(dominant_action_ratio, 4),
+        "account_switch_ratio": round(switches / denom, 4),
+        "same_account_repeat_ratio": round(repeats_same_account / denom, 4),
     }
 
 

@@ -20,10 +20,20 @@ import argparse
 import json
 import os
 import time
+import pathlib
+import inspect
 from typing import Any, Dict, List
 
+# Reduce CUDA allocator fragmentation on long RL runs.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+# Unsloth should be imported before transformers/trl when available.
+try:
+    import unsloth  # noqa: F401
+except Exception:  # noqa: BLE001
+    unsloth = None  # type: ignore
+
 from datasets import Dataset
-from trl import SFTTrainer
 from transformers import TrainingArguments
 
 
@@ -150,6 +160,39 @@ Respond with JSON only:"""
 #   3. All account_id values capped at max 30
 # ---------------------------------------------------------------------------
 
+def _safe_import_sft_trainer():
+    """
+    Import TRL's SFTTrainer with a Windows-safe UTF-8 fallback.
+
+    Some Windows locales default to cp1252, while TRL reads template files with
+    Path.read_text() and no explicit encoding. This shim forces UTF-8 when the
+    encoding is omitted, preventing UnicodeDecodeError on import.
+    """
+    original_read_text = pathlib.Path.read_text
+    read_text_sig = inspect.signature(original_read_text)
+    supports_newline = "newline" in read_text_sig.parameters
+
+    def _utf8_read_text(self, encoding=None, errors=None, newline=None):
+        kwargs = {
+            "encoding": encoding or "utf-8",
+            "errors": errors,
+        }
+        if supports_newline:
+            kwargs["newline"] = newline
+        return original_read_text(self, **kwargs)
+
+    pathlib.Path.read_text = _utf8_read_text  # type: ignore[assignment]
+    try:
+        from trl import SFTTrainer  # noqa: WPS433
+        try:
+            from trl import SFTConfig  # type: ignore  # noqa: WPS433
+        except Exception:  # noqa: BLE001
+            SFTConfig = None
+        return SFTTrainer, SFTConfig, None
+    except Exception as exc:  # noqa: BLE001
+        return None, None, exc
+
+
 def run_sft_warm_start(model, tokenizer, output_dir):
     """
     SFT warm start: gives the model a sensible starting policy before GRPO begins.
@@ -157,6 +200,11 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     Without this, early GRPO rollouts are nearly random and convergence takes much longer.
     """
     print("Starting SFT Warm Start...")
+    SFTTrainer, SFTConfig, sft_import_error = _safe_import_sft_trainer()
+    if SFTTrainer is None:
+        print(f"Skipping SFT warm start: could not import TRL SFTTrainer ({sft_import_error})")
+        print("Continuing with RL-only startup for this run.")
+        return model
 
     raw_data = []
 
@@ -367,23 +415,66 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     print(f"  SFT dataset: {len(sft_dataset)} examples")
 
-    trainer = SFTTrainer(
-        model=model,
-        train_dataset=sft_dataset,
-        dataset_text_field="text",   # FIX: was "prompt" — must be the combined field
-        max_seq_length=1024,
-        tokenizer=tokenizer,
-        args=TrainingArguments(
-            output_dir=os.path.join(output_dir, "sft_warmstart"),
-            per_device_train_batch_size=4,
-            num_train_epochs=3,
-            learning_rate=2e-5,
-            logging_steps=5,
-            save_strategy="no",
-            fp16=True,
-            report_to="none",
-        ),
-    )
+    # Match precision flags to the loaded model dtype to avoid
+    # Unsloth/TRL precision mismatches (bf16 model + fp16 args).
+    import torch
+    train_dtype = None
+    try:
+        train_dtype = next(model.parameters()).dtype
+    except Exception:  # noqa: BLE001
+        train_dtype = None
+
+    use_bf16 = train_dtype == torch.bfloat16
+    use_fp16 = not use_bf16
+
+    sft_args_kwargs = {
+        "output_dir": os.path.join(output_dir, "sft_warmstart"),
+        "per_device_train_batch_size": 4,
+        "num_train_epochs": 3,
+        "learning_rate": 2e-5,
+        "logging_steps": 5,
+        "save_strategy": "no",
+        "fp16": use_fp16,
+        "bf16": use_bf16,
+        "report_to": "none",
+        # Unsloth SFT can default to padding_free=True in some stacks, which
+        # requires packing/truncation constraints. Disable it for compatibility.
+        "padding_free": False,
+        "packing": False,
+    }
+
+    # Prefer TRL's SFTConfig when available to avoid TrainingArguments/TRL
+    # field mismatches (e.g. push_to_hub_token incompatibilities).
+    if SFTConfig is not None:
+        cfg_sig = inspect.signature(SFTConfig.__init__)
+        filtered = {k: v for k, v in sft_args_kwargs.items() if k in cfg_sig.parameters}
+        sft_args = SFTConfig(**filtered)
+    else:
+        sft_args = TrainingArguments(**sft_args_kwargs)
+
+    # TRL API differs by version. Build kwargs based on supported parameters.
+    trainer_kwargs = {
+        "model": model,
+        "train_dataset": sft_dataset,
+        "tokenizer": tokenizer,
+        "args": sft_args,
+    }
+    sft_signature = inspect.signature(SFTTrainer.__init__)
+    if "dataset_text_field" in sft_signature.parameters:
+        trainer_kwargs["dataset_text_field"] = "text"
+    if "max_seq_length" in sft_signature.parameters:
+        trainer_kwargs["max_seq_length"] = 1024
+
+    try:
+        trainer = SFTTrainer(**trainer_kwargs)
+    except TypeError as exc:
+        # Common Unsloth/TRL mismatch on some Colab stacks:
+        # SFTConfig.__init__() got unexpected keyword argument 'push_to_hub_token'
+        if "push_to_hub_token" in str(exc):
+            print("Skipping SFT warm start due to Unsloth/TRL args mismatch:", exc)
+            print("Continuing with RL-only startup for this run.")
+            return model
+        raise
 
     trainer.train()
     print("SFT Warm Start complete.")
@@ -648,6 +739,8 @@ def run_training(
                     }, f)
                 _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
                 print(f"  Checkpoint saved: {ckpt_path}")
+            except Exception as e:
+                print(f"  Checkpoint save failed at episode {episode}: {e}")
 
     # Final plot save (required for automated judging check)
     _save_reward_plot(episode_rewards, episode_losses, output_dir) # Added episode_losses here
@@ -705,7 +798,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     model.train()
     optimizer.zero_grad()
 
-    total_loss    = None
+    total_loss_value = 0.0
     valid_samples = 0
 
     for i, step_data in enumerate(batch):
@@ -717,7 +810,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
                 full_text,
                 return_tensors="pt",
                 truncation=True,
-                max_length=2048,
+                max_length=1024,
                 padding=False,
             )
             enc = {k: v.to(model.device) for k, v in enc.items()}
@@ -727,7 +820,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
                 step_data["prompt"],
                 return_tensors="pt",
                 truncation=True,
-                max_length=2048,
+                max_length=1024,
             )
             prompt_len = min(
                 prompt_enc["input_ids"].shape[1],
@@ -745,19 +838,22 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             #                         negative advantage -> maximise loss (decrease prob)
             sample_loss = outputs.loss * (-advantage)
 
-            if total_loss is None:
-                total_loss = sample_loss / len(batch)
-            else:
-                total_loss = total_loss + sample_loss / len(batch)
+            # Memory-safe accumulation: backprop per sample instead of retaining
+            # one large computation graph across the full mini-batch.
+            sample_loss = sample_loss / len(batch)
+            sample_loss.backward()
+            total_loss_value += float(sample_loss.detach().item())
 
             valid_samples += 1
 
         except Exception as e:
             print(f"    Skipping sample {i}: {e}")
+            if "out of memory" in str(e).lower():
+                # Try to recover and continue with the remaining samples.
+                torch.cuda.empty_cache()
             continue
 
-    if total_loss is not None and valid_samples > 0:
-        total_loss.backward()
+    if valid_samples > 0:
         # Gradient clipping prevents large updates from destabilising training
         clip_grad_norm_(
             [p for p in model.parameters() if p.requires_grad],
@@ -768,14 +864,14 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         pos_frac = (advantages > 0).float().mean().item()
         print(
             f"    GRPO update | n={valid_samples}/{len(batch)} | "
-            f"loss={total_loss.item():.4f} | "
+            f"loss={total_loss_value:.4f} | "
             f"mean_reward={raw_rewards.mean():.4f} | "
             f"pos_frac={pos_frac:.1%}"
         )
     else:
         print("    GRPO update skipped: no valid samples")
         return 0.0
-    return total_loss.item()
+    return total_loss_value
 
 
 # ---------------------------------------------------------------------------
