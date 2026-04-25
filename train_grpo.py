@@ -166,9 +166,17 @@ def _safe_import_sft_trainer():
     encoding is omitted, preventing UnicodeDecodeError on import.
     """
     original_read_text = pathlib.Path.read_text
+    read_text_sig = inspect.signature(original_read_text)
+    supports_newline = "newline" in read_text_sig.parameters
 
     def _utf8_read_text(self, encoding=None, errors=None, newline=None):
-        return original_read_text(self, encoding=encoding or "utf-8", errors=errors, newline=newline)
+        kwargs = {
+            "encoding": encoding or "utf-8",
+            "errors": errors,
+        }
+        if supports_newline:
+            kwargs["newline"] = newline
+        return original_read_text(self, **kwargs)
 
     pathlib.Path.read_text = _utf8_read_text  # type: ignore[assignment]
     try:
