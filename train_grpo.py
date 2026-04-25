@@ -437,7 +437,16 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     if "max_seq_length" in sft_signature.parameters:
         trainer_kwargs["max_seq_length"] = 1024
 
-    trainer = SFTTrainer(**trainer_kwargs)
+    try:
+        trainer = SFTTrainer(**trainer_kwargs)
+    except TypeError as exc:
+        # Common Unsloth/TRL mismatch on some Colab stacks:
+        # SFTConfig.__init__() got unexpected keyword argument 'push_to_hub_token'
+        if "push_to_hub_token" in str(exc):
+            print("Skipping SFT warm start due to Unsloth/TRL args mismatch:", exc)
+            print("Continuing with RL-only startup for this run.")
+            return model
+        raise
 
     trainer.train()
     print("SFT Warm Start complete.")
