@@ -536,7 +536,7 @@ def run_training(
                 )
             except Exception:
                 action = MSMERLAction(
-                    action_type="wait_and_observe",
+                    action_type="format_error", # CHANGED: Explicitly flag as an error
                     account_id=1,
                     parameters={},
                     reasoning="(parse error)",
