@@ -1,255 +1,162 @@
 ---
-title: Msmeenv Environment Server
-emoji: 📻
-colorFrom: pink
-colorTo: blue
+title: Linguistic Decoding RL Environment
+emoji: "🧠"
+colorFrom: blue
+colorTo: purple
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - reinforcement-learning
+  - linguistic-decoding
 ---
 
-# Msmeenv Environment
+# Linguistic Decoding RL
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+An OpenEnv environment where a small language model learns to decode hidden distress from language and behavior in partially observable financial communication.
 
-## Quick Start
+## Problem Statement
 
-The simplest way to use the Msmeenv environment is through the `MsmeenvEnv` class:
+Many borrowers do not state financial risk directly.
+They hide it through communication style:
 
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
+- **Understatement pattern:** "Small issue, will pay soon" while stress is high.
+- **Overconfidence pattern:** "Great momentum, exciting pipeline" while runway is collapsing.
 
-try:
-    # Create environment from Docker image
-    msmeEnvenv = MsmeenvEnv.from_docker_image("msmeEnv-env:latest")
+The core task is **linguistic decoding under hidden state**, not generic sentiment classification.
+The agent must infer latent risk from language plus behavioral evidence and choose the right intervention over multiple steps.
 
-    # Reset
-    result = msmeEnvenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+## Why This Is an RL Problem
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+This task needs sequential decision making:
 
-    for msg in messages:
-        result = msmeEnvenv.step(MsmeenvAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+- The true financial state is hidden.
+- The agent acts, then sees delayed consequences.
+- Wrong actions can create cascading future risk.
+- Reward is sparse if we only score at the end, so we combine step and episode rewards.
 
-finally:
-    # Always clean up
-    msmeEnvenv.close()
-```
+A static classifier cannot optimize intervention strategy across a horizon. RL can.
 
-That's it! The `MsmeenvEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+## Environment Design
 
-## Building the Docker Image
+The environment is structured as a **core decoder + domain sub-environments**:
 
-Before using the environment, you need to build the Docker image:
+### 1) Core Environment: Linguistic Decoding
 
-```bash
-# From project root
-docker build -t msmeEnv-env:latest -f server/Dockerfile .
-```
+Shared abstractions across all domains:
 
-## Deploying to Hugging Face Spaces
+- Observation:
+  - `message_text`
+  - `speaker_profile`
+  - `behavioral_signals`
+  - `recent_actions`
+  - `time_step`
+- Hidden state:
+  - true risk and trajectory (not visible to agent)
+- Actions:
+  - ask clarification, verify signal, soft reminder, firm reminder, restructure, escalate
+- Transition:
+  - hidden state evolves based on action quality and account dynamics
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+### 2) Sub-Environment A: MSME Module
 
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
+- Distress often appears as understatement.
+- Signals emphasize payment cadence, GST regularity, call response, and cluster effects.
 
-# Or specify options
-openenv push --namespace my-org --private
-```
+### 3) Sub-Environment B: Startup Module
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
+- Distress often appears as overconfidence.
+- Signals emphasize runway proxies, investor update cadence, hiring activity, and ecosystem effects.
 
-### Prerequisites
+This split keeps the science focused (linguistic decoding) while preserving real-world specificity.
 
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
+## Reward Design
 
-### Options
+### Step Rewards
 
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
+- Positive for actions that reveal hidden state early and improve repayment discipline.
+- Negative for inappropriate tool usage, missed distress signals, and avoidable escalation.
 
-### Examples
+### Episode Rewards
 
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
+Weighted objective over:
 
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
+- final default/NPA rate
+- recovery rate
+- relationship preservation
+- tool appropriateness by account type
 
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
+## Training Setup
 
-# Push as a private space
-openenv push --private
+- Base model: small instruct LLM (for example, 1B-2B class)
+- RL method: GRPO with TRL
+- Environment API: OpenEnv-compliant `reset`, `step`, `state`
+- Deployment target: Hugging Face Space
 
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
+## Evaluation Plan
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
+To satisfy judging requirements, we report:
 
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
+- reward curve over episodes
+- loss curve over training
+- before vs after policy behavior on fixed deterministic scenarios
+- baseline comparison (untrained or random policy)
 
-## Environment Details
+## Why This Scope Is Strong for Hackathon
 
-### Action
-**MsmeenvAction**: Contains a single field
-- `message` (str) - The message to echo back
+This framing reduces execution risk while staying ambitious:
 
-### Observation
-**MsmeenvObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
+- It keeps a clear novel claim: **asymmetric linguistic decoding under hidden state**.
+- It avoids overloading the first milestone with too many world mechanics.
+- It still allows expansion: MSME and startup remain first-class sub-environments.
 
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
+## Alignment With OpenEnv Hackathon Criteria
 
-## Advanced Usage
+- **Environment Innovation (40%)**: Novel partially observable communication-to-action loop.
+- **Storytelling (30%)**: Simple and memorable narrative: decode two opposite communication masks.
+- **Showing Improvement (20%)**: Deterministic trap scenarios make before/after behavior obvious.
+- **Reward + Pipeline (10%)**: Verifiable reward components and reproducible training script.
 
-### Connecting to an Existing Server
+## Deliverables Checklist
 
-If you already have a Msmeenv environment server running, you can connect directly:
+- [ ] OpenEnv-compliant environment hosted on HF Space
+- [ ] Training script (TRL/Unsloth) runnable end-to-end
+- [ ] Committed reward/loss plots (`.png` or `.jpg`)
+- [ ] README with links to Space, training notebook/script, and short demo/writeup
+- [ ] Short demo (<=2 minutes) showing clear learned behavior shift
 
-```python
-from msmeEnv import MsmeenvEnv
-
-# Connect to existing server
-msmeEnvenv = MsmeenvEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = msmeEnvenv.reset()
-result = msmeEnvenv.step(MsmeenvAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `msmeEnvenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
-
-# Connect with context manager (auto-connects and closes)
-with MsmeenvEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(MsmeenvAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    MsmeenvEnvironment,  # Pass class, not instance
-    MsmeenvAction,
-    MsmeenvObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from msmeEnv import MsmeenvAction, MsmeenvEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with MsmeenvEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(MsmeenvAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
+## Quick Start (Local)
 
 ```bash
-# From the server directory
-python3 server/msmeEnv_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
+docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
 uvicorn server.app:app --reload
 ```
 
 ## Project Structure
 
-```
+```text
 msmeEnv/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # MsmeenvEnv client
-├── models.py              # Action and Observation models
+├── README.md
+├── openenv.yaml
+├── train_grpo.py
+├── client.py
+├── models.py
+├── domains/
+│   ├── base.py
+│   └── msme_startup/
+│       └── adapter.py
+├── scripts/
+│   ├── run_baseline_eval.py
+│   └── generate_judge_artifacts.py
 └── server/
-    ├── __init__.py        # Server module exports
-    ├── msmeEnv_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+    ├── app.py
+    └── msmeEnv_environment.py
 ```
+
+## Notes
+
+- `train_grpo.py` stays at repo root as the primary training entrypoint.
+- `scripts/run_baseline_eval.py` and `scripts/generate_judge_artifacts.py` are required for judge-ready evidence (base vs trained and reproducible artifact manifests).
+- Keep `openenv.yaml` pointing to `server.app:app` to preserve OpenEnv compliance.

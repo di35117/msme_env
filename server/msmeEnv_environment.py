@@ -29,36 +29,26 @@ from openenv.core.env_server.types import State
 
 try:
     from ..models import MSMERLAction, MSMERLObservation
-    from ..world_generator import generate_portfolio, build_msme_observable, build_startup_observable
+    from ..domains import get_adapter
+    from ..world_generator import build_msme_observable, build_startup_observable
     from ..network import (
-        propagate_msme_cluster_effect,
-        propagate_startup_ecosystem_effect,
         apply_network_effects,
-        check_cross_contamination,
         collect_active_alerts,
     )
     from ..reward import (
-        compute_step_reward,
-        classify_action_outcome,
-        compute_episode_reward,
         _is_appropriate_tool,
     )
     from ..memory import MemoryManager
     from ..message_generator import generate_rm_message
 except (ModuleNotFoundError, ImportError):  # FIXED: Catching both error types safely
     from models import MSMERLAction, MSMERLObservation
-    from world_generator import generate_portfolio, build_msme_observable, build_startup_observable
+    from domains import get_adapter
+    from world_generator import build_msme_observable, build_startup_observable
     from network import (
-        propagate_msme_cluster_effect,
-        propagate_startup_ecosystem_effect,
         apply_network_effects,
-        check_cross_contamination,
         collect_active_alerts,
     )
     from reward import (
-        compute_step_reward,
-        classify_action_outcome,
-        compute_episode_reward,
         _is_appropriate_tool,
     )
     from memory import MemoryManager
@@ -110,6 +100,8 @@ class MSMERLEnvironment(Environment):
 
         # Episode histories for adversarial curriculum
         self._all_episode_histories: List[List[Dict]] = []
+        # Domain adapter for generalized architecture (defaults to current domain)
+        self._domain_adapter = get_adapter("msme_startup")
 
     # -------------------------------------------------------------------------
     # RESET
@@ -124,7 +116,7 @@ class MSMERLEnvironment(Environment):
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
         # Generate new portfolio
-        self._portfolio = generate_portfolio(episode=self._episode_num)
+        self._portfolio = self._domain_adapter.generate_world(episode=self._episode_num)
         self._hidden_profiles = self._portfolio["hidden_profiles"]
         self._observable_states = self._portfolio["observable_states"]
 
@@ -214,7 +206,7 @@ class MSMERLEnvironment(Environment):
         observable     = self._observable_states[account_id]
 
         # 1. Classify outcome using hidden state
-        outcome = classify_action_outcome(
+        outcome = self._domain_adapter.classify_outcome(
             action_type=action_type,
             account_type=account_type,
             hidden_profile=hidden_profile,
@@ -223,7 +215,7 @@ class MSMERLEnvironment(Environment):
         )
 
         # 2. Compute step reward
-        step_reward = compute_step_reward(
+        step_reward = self._domain_adapter.compute_step_reward(
             action_type=action_type,
             account_type=account_type,
             outcome=outcome,
@@ -240,31 +232,14 @@ class MSMERLEnvironment(Environment):
         ecosystem_effects  = {}
         cross_contamination = []
 
-        if account_type == "msme":
-            net_effect_type = self._map_to_network_effect(action_type, outcome, "msme")
-            if net_effect_type:
-                cluster_effects = propagate_msme_cluster_effect(
-                    self._hidden_profiles,
-                    account_id,
-                    net_effect_type,
-                    effect_strength=abs(trust_delta) * 2,
-                )
-                # Check cross-contamination to startup accounts
-                contagion_strength = hidden_profile.get("cluster_centrality", 0.5)
-                if net_effect_type in ("sarfaesi", "npa"):
-                    cross_contamination = check_cross_contamination(
-                        self._hidden_profiles, account_id, contagion_strength
-                    )
-
-        elif account_type == "startup":
-            net_effect_type = self._map_to_network_effect(action_type, outcome, "startup")
-            if net_effect_type:
-                ecosystem_effects = propagate_startup_ecosystem_effect(
-                    self._hidden_profiles,
-                    account_id,
-                    net_effect_type,
-                    effect_strength=abs(trust_delta) * 2,
-                )
+        cluster_effects, ecosystem_effects, cross_contamination = self._domain_adapter.propagate_effects(
+            hidden_profiles=self._hidden_profiles,
+            account_id=account_id,
+            account_type=account_type,
+            action_type=action_type,
+            outcome=outcome,
+            trust_delta=trust_delta,
+        )
 
         # Apply network effects to hidden profiles
         if cluster_effects:
@@ -353,7 +328,7 @@ class MSMERLEnvironment(Environment):
 
         if self._current_month > 36:
             done = True
-            episode_reward_breakdown = compute_episode_reward(
+            episode_reward_breakdown = self._domain_adapter.compute_episode_reward(
                 self._hidden_profiles,
                 self._episode_history,
                 episode_num=self._episode_num,
