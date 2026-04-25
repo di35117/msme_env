@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-linguistic-decoding"
+version = "0.2.0"
+description = "Domain-agnostic linguistic decoding RL environment for OpenEnv. Demo domain: MSME + startup credit management."
+requires-python = ">=3.10"
+dependencies = [
+    # Core OpenEnv runtime
+    "openenv-core[core]>=0.2.2",
+    # Server
+    "fastapi>=0.115.0",
+    "uvicorn>=0.24.0",
+    # ML / training
+    "torch>=2.11.0",
+    "transformers>=5.6.2",
+    "accelerate>=1.13.0",
+    "trl>=0.29.0",
+    # Utilities
+    "pydantic>=2.0.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "linguistic_decoding",
+    "linguistic_decoding.core",
+    "linguistic_decoding.domains",
+    "linguistic_decoding.domains.msme_startup",
+    "linguistic_decoding.server",
+]
+package-dir = {
+    "linguistic_decoding"                      = ".",
+    "linguistic_decoding.core"                 = "core",
+    "linguistic_decoding.domains"              = "domains",
+    "linguistic_decoding.domains.msme_startup" = "domains/msme_startup",
+    "linguistic_decoding.server"               = "server",
+}
