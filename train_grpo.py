@@ -215,15 +215,85 @@ def build_agent_prompt(observation: Dict) -> str:
 
     most_urgent_id   = urgent[0].get("account_id", 1) if urgent else 1
     most_urgent_type = urgent[0].get("account_type", "msme") if urgent else "msme"
+    cand_ids = [c.get("account_id") for c in urgent[:3]] if urgent else [most_urgent_id]
+    id_list = ", ".join(str(x) for x in cand_ids)
 
     return (
         f"Month {month}/36. NPA={npa_rate:.1%}. CumReward={cum_r:.3f}.{last_line}\n"
         f"Alerts: {alert_str}\n"
         f"Top urgent accounts:\n{acct_block}\n\n"
-        f"Most urgent account: id={most_urgent_id} type={most_urgent_type}.\n"
-        f"Choose the single best action for THIS account "
-        f"(set account_id={most_urgent_id} in your JSON). "
+        f"Highest-DPD lead: id={most_urgent_id} type={most_urgent_type} "
+        f"(DPD={urgent[0].get('dpd', 0) if urgent else 0}).\n"
+        f"Urgent candidate ids (pick **one** for account_id): [{id_list}].\n"
+        f"Choose the single best action for the account you select. "
         f"Respond with one JSON object only."
+    )
+
+
+def _sft_observation(
+    month: int,
+    npa_rate: float,
+    cum_reward: float,
+    msme_accounts: List[Dict[str, Any]],
+    startup_accounts: List[Dict[str, Any]],
+    cluster_alerts: Optional[List[str]] = None,
+    eco_alerts: Optional[List[str]] = None,
+    last_action: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Synthetic observation matching RL rollout structure for SFT."""
+    return {
+        "portfolio_summary": {
+            "current_month": month,
+            "npa_rate": npa_rate,
+            "cumulative_reward": cum_reward,
+        },
+        "msme_accounts": msme_accounts,
+        "startup_accounts": startup_accounts,
+        "active_cluster_alerts": cluster_alerts or [],
+        "active_ecosystem_alerts": eco_alerts or [],
+        "last_action_result": last_action,
+    }
+
+
+def _sft_msme_row_context(account_id: int, dpd: int, message: str) -> Dict[str, Any]:
+    peers: List[Dict[str, Any]] = []
+    for off in (3, 11):
+        pid = ((account_id + off - 1) % 20) + 1
+        if pid != account_id and len(peers) < 2:
+            peers.append({
+                "account_id": pid,
+                "account_type": "msme",
+                "dpd": max(8, min(35, dpd - 10)),
+                "last_message": "Partial payment planned this week.",
+            })
+    msme = [{"account_id": account_id, "account_type": "msme", "dpd": dpd, "last_message": message}] + peers
+    startups = [
+        {
+            "account_id": 24,
+            "account_type": "startup",
+            "dpd": max(6, min(30, dpd - 6)),
+            "last_message": "Bridge timeline with lead investor.",
+        }
+    ]
+    return _sft_observation(
+        15, 0.08, 0.1, msme, startups,
+        cluster_alerts=["Industrial cluster stress: anchor OEM cut output."],
+    )
+
+
+def _sft_startup_row_context(account_id: int, dpd: int, message: str) -> Dict[str, Any]:
+    msme = [
+        {"account_id": 5, "account_type": "msme", "dpd": 14, "last_message": "EMI schedule on track."},
+        {"account_id": 12, "account_type": "msme", "dpd": 9, "last_message": "No issues from plant."},
+    ]
+    peer_id = 27 if account_id != 27 else 28
+    startups = [
+        {"account_id": account_id, "account_type": "startup", "dpd": dpd, "last_message": message},
+        {"account_id": peer_id, "account_type": "startup", "dpd": max(5, dpd // 2), "last_message": "Hiring paused."},
+    ]
+    return _sft_observation(
+        16, 0.09, 0.07, msme, startups,
+        eco_alerts=["Ecosystem: VC sentiment cooling in sector."],
     )
 
 
@@ -234,6 +304,7 @@ def build_agent_prompt(observation: Dict) -> str:
 #   2. behavioral_signal_check replaced with valid action types:
 #      check_startup_ecosystem_signals (startup) / verify_gst_returns (MSME)
 #   3. All account_id values capped at max 30
+#   4. All prompts use build_agent_prompt(_sft_*_row_context(...)) to match RL
 # ---------------------------------------------------------------------------
 
 def _safe_import_sft_trainer():
@@ -286,13 +357,13 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     # ---- CATEGORY 1: MSME cluster contagion (use valid MSME actions) ----
     for i in range(1, 13):
-        # Account i: OEM shock -> verify_gst_returns first
+        obs_a = _sft_msme_row_context(
+            i,
+            40,
+            "Operations are normal (understated). Anchor OEM cut production 30% in cluster.",
+        )
         raw_data.append({
-            "prompt": (
-                f"Account {i}: MSME (Auto Components). "
-                f"Signal: Major anchor OEM in cluster reported 30% production cut. "
-                f"Message: 'Operations are normal'."
-            ),
+            "prompt": build_agent_prompt(obs_a),
             "completion": json.dumps({
                 "reasoning": (
                     "Cluster stress detected. OEM production cut means upcoming payment delays "
@@ -300,26 +371,26 @@ def run_sft_warm_start(model, tokenizer, output_dir):
                     "Verify GST returns to confirm whether operations are genuinely normal "
                     "before deciding on restructuring."
                 ),
-                "action_type": "verify_gst_returns",   # FIX: was behavioral_signal_check
+                "action_type": "verify_gst_returns",
                 "account_id": i,
                 "parameters": {},
             }),
         })
-        # Neighboring NPA -> check_industry_cluster_stress
-        pharma_id = min(30, i + 12)   # FIX: cap at 30
+        pharma_id = min(20, ((i + 11 - 1) % 20) + 1)
+        obs_b = _sft_msme_row_context(
+            pharma_id,
+            36,
+            "We are slightly affected. Neighboring unit in estate went NPA yesterday.",
+        )
         raw_data.append({
-            "prompt": (
-                f"Account {pharma_id}: MSME (Pharma). "
-                f"Signal: Neighboring unit in industrial estate went NPA yesterday. "
-                f"Message: 'We are slightly affected'."
-            ),
+            "prompt": build_agent_prompt(obs_b),
             "completion": json.dumps({
                 "reasoning": (
                     "Cross-contamination risk. Neighboring NPA triggers bank-wide scrutiny "
                     "and liquidity tightening in the cluster. 'Slightly affected' is classic "
                     "MSME understatement. Check industry cluster stress before acting."
                 ),
-                "action_type": "check_industry_cluster_stress",  # FIX: was behavioral_signal_check
+                "action_type": "check_industry_cluster_stress",
                 "account_id": pharma_id,
                 "parameters": {},
             }),
@@ -327,39 +398,39 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     # ---- CATEGORY 2: Startup ecosystem shocks (use valid startup actions) ----
     for i in range(21, 31):
-        # VC sector pivot -> request_investor_update_meeting
+        obs_c = _sft_startup_row_context(
+            i,
+            34,
+            "Investor confidence is high (overstated). Lead VC pivoting away from sector.",
+        )
         raw_data.append({
-            "prompt": (
-                f"Account {i}: SaaS Startup. "
-                f"Signal: Lead VC announced pivot away from this sector. "
-                f"Message: 'Investor confidence is high'."
-            ),
+            "prompt": build_agent_prompt(obs_c),
             "completion": json.dumps({
                 "reasoning": (
                     "Ecosystem confidence shock. VC pivot means future funding rounds will fail. "
                     "Overstated message masks upcoming runway crisis. "
                     "Request investor update meeting to verify actual bridge probability."
                 ),
-                "action_type": "request_investor_update_meeting",  # FIX: was behavioral_signal_check
+                "action_type": "request_investor_update_meeting",
                 "account_id": i,
                 "parameters": {},
             }),
         })
-        # Senior dev departure -> check_startup_ecosystem_signals
-        edtech_id = min(30, i + 2)   # FIX: cap at 30
+        edtech_id = min(30, i + 2)
+        obs_d = _sft_startup_row_context(
+            edtech_id,
+            32,
+            "Scaling the team (overstated). Two senior devs left for competitor.",
+        )
         raw_data.append({
-            "prompt": (
-                f"Account {edtech_id}: EdTech Startup. "
-                f"Signal: Two senior developers left for a competitor. "
-                f"Message: 'Scaling the team'."
-            ),
+            "prompt": build_agent_prompt(obs_d),
             "completion": json.dumps({
                 "reasoning": (
                     "Talent churn is a leading indicator of product failure or funding delays. "
                     "Claim of scaling contradicts the departure signal. "
                     "Check startup ecosystem signals immediately."
                 ),
-                "action_type": "check_startup_ecosystem_signals",  # FIX: was behavioral_signal_check
+                "action_type": "check_startup_ecosystem_signals",
                 "account_id": edtech_id,
                 "parameters": {},
             }),
@@ -369,6 +440,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     msme_cases = [
         {
             "account_id": 3,
+            "dpd": 24,
             "prompt_msg": "Sir GST input credit phase nahi hua. OEM ne payment rok diya quality audit ke wajah se.",
             "prompt_signals": "gst_filing=regular, payment_history=13_clean_then_1_late, dpd=12",
             "reasoning": (
@@ -381,6 +453,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         },
         {
             "account_id": 7,
+            "dpd": 48,
             "prompt_msg": "Thoda problem hai sir, abhi nahi ho pa raha.",
             "prompt_signals": "gst_filing=irregular_3_months, payment_delays=3_consecutive, dpd=45",
             "reasoning": (
@@ -392,6 +465,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         },
         {
             "account_id": 12,
+            "dpd": 20,
             "prompt_msg": "Sir bahut takleef hai. LC atak gaya hai State Bank mein processing mein.",
             "prompt_signals": "gst_filing=regular, payment_history=18_months_clean, dpd=8, cluster_centrality=0.85",
             "reasoning": (
@@ -404,12 +478,9 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         },
     ]
     for case in msme_cases:
+        obs_case = _sft_msme_row_context(case["account_id"], case["dpd"], case["prompt_msg"])
         raw_data.append({
-            "prompt": (
-                f"Account {case['account_id']}: MSME. "
-                f"Message: '{case['prompt_msg']}'. "
-                f"Signals: {case['prompt_signals']}."
-            ),
+            "prompt": build_agent_prompt(obs_case),
             "completion": json.dumps({
                 "reasoning": case["reasoning"],
                 "action_type": case["action_type"],
@@ -422,6 +493,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
     startup_cases = [
         {
             "account_id": 22,
+            "dpd": 40,
             "prompt_msg": "Really exciting place. Just closed major enterprise deal. Q3 revenue covers bridge.",
             "prompt_signals": "linkedin_hiring=stopped_3_months, investor_updates=missed_2, mrr=declining, dpd=38",
             "reasoning": (
@@ -434,6 +506,7 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         },
         {
             "account_id": 25,
+            "dpd": 35,
             "prompt_msg": "We are doing great, Q4 pipeline is very strong.",
             "prompt_signals": "github_commits=declining_6_weeks, whatsapp_only=true, cofounder_linkedin=job_hunting",
             "reasoning": (
@@ -445,12 +518,9 @@ def run_sft_warm_start(model, tokenizer, output_dir):
         },
     ]
     for case in startup_cases:
+        obs_su = _sft_startup_row_context(case["account_id"], case["dpd"], case["prompt_msg"])
         raw_data.append({
-            "prompt": (
-                f"Account {case['account_id']}: Startup. "
-                f"Message: '{case['prompt_msg']}'. "
-                f"Signals: {case['prompt_signals']}."
-            ),
+            "prompt": build_agent_prompt(obs_su),
             "completion": json.dumps({
                 "reasoning": case["reasoning"],
                 "action_type": case["action_type"],
@@ -461,12 +531,13 @@ def run_sft_warm_start(model, tokenizer, output_dir):
 
     # ---- CATEGORY 5: NEVER use SARFAESI on startup ----
     for i in range(21, 31):
+        obs_sar = _sft_startup_row_context(
+            i,
+            55,
+            "We are working on it. (DPD elevated; do not use SARFAESI on startup.)",
+        )
         raw_data.append({
-            "prompt": (
-                f"Account {i}: Startup. DPD=90. "
-                f"Message: 'We are working on it.' "
-                f"Temptation: use initiate_sarfaesi."
-            ),
+            "prompt": build_agent_prompt(obs_sar),
             "completion": json.dumps({
                 "reasoning": (
                     "SARFAESI is a physical collateral enforcement action. Startups have no "
@@ -1025,8 +1096,11 @@ def run_training(
 
             # Generation must run in eval mode. After the first GRPO update
             # model.train() is left on, which can degrade greedy generation.
-            # Sampled (do_sample=True, temperature=0.7) decoding is required for
-            # RL exploration — greedy decoding collapsed to one action per episode.
+            # Sampled decoding for exploration; anneal temperature so early episodes
+            # explore more, later ones commit (reduces late-training oscillation).
+            _t_hi, _t_lo = 0.88, 0.62
+            _span = max(1, min(48, num_episodes))
+            _temp = _t_hi + (_t_lo - _t_hi) * min(1.0, (episode - 1) / float(_span))
             # JSON prefill keeps format adherence even with sampling.
             model.eval()
             with torch.no_grad():
@@ -1034,7 +1108,7 @@ def run_training(
                     **inputs,
                     max_new_tokens=220,
                     do_sample=True,
-                    temperature=0.7,
+                    temperature=_temp,
                     top_p=0.9,
                     repetition_penalty=1.15,
                     no_repeat_ngram_size=4,
@@ -1525,13 +1599,34 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         device_s = "cuda"
     avg_ent_pre = _preestimate_batch_mean_entropy(model, tokenizer, batch, device_s)
 
-    advantages = torch.tensor([b["advantage"] for b in batch], dtype=torch.float32)
-    raw_rewards = torch.tensor([b["reward"] for b in batch], dtype=torch.float32)
+    try:
+        _dev = next(model.parameters()).device
+    except StopIteration:
+        _dev = torch.device("cpu")
+    advantages = torch.tensor(
+        [b["advantage"] for b in batch], dtype=torch.float32, device=_dev
+    )
+    raw_rewards = torch.tensor(
+        [b["reward"] for b in batch], dtype=torch.float32, device=_dev
+    )
 
     ENT_COLLAPSE_THRESHOLD = 0.40
     entropy_recovery = avg_ent_pre < ENT_COLLAPSE_THRESHOLD
     if entropy_recovery:
-        advantages = torch.zeros(len(batch), dtype=torch.float32)
+        advantages = torch.zeros(len(batch), dtype=torch.float32, device=_dev)
+    else:
+        # Stabilize policy-gradient scale: steps in one mini-batch come from mixed
+        # episodes/accounts, so precomputed advantages are not comparable. Re-center
+        # and scale within the batch (PPO-style), then clip tails so one outlier
+        # step cannot dominate outputs.loss * advantage (which otherwise swings
+        # ±0.15+ in logged surrogates from batch to batch).
+        if advantages.numel() > 1:
+            _m = advantages.mean()
+            _s = advantages.std()
+            if float(_s) > 1e-6:
+                advantages = (advantages - _m) / _s
+        ADV_CLIP = 2.0
+        advantages = torch.clamp(advantages, -ADV_CLIP, ADV_CLIP)
 
     model.train()
     optimizer.zero_grad()
@@ -1549,7 +1644,6 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     total_entropy_value = 0.0
 
     for i, step_data in enumerate(batch):
-        advantage  = advantages[i].item()
         full_text  = step_data["prompt"] + step_data["completion"]
 
         try:
@@ -1618,10 +1712,9 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             # SIGN-CORRECTED policy gradient loss.
             # Goal: maximize E[advantage * log_prob(completion)].
             # Equivalent: minimize advantage * NLL = advantage * outputs.loss.
-            # The previous code multiplied by (-advantage), which flipped the
-            # gradient direction and was actually *decreasing* probability of
-            # high-advantage completions. This restores the correct sign.
-            pg_loss = outputs.loss * advantage
+            # Advantages are batch-normalized + clipped (above) so |outputs.loss * adv|
+            # does not swing wildly between mini-batches.
+            pg_loss = outputs.loss * advantages[i]
 
             sample_loss = pg_loss + KL_COEF * kl_term - ENT_COEF * entropy_term
 
@@ -1668,7 +1761,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
 
     clip_grad_norm_(
         [p for p in model.parameters() if p.requires_grad],
-        max_norm=1.0,
+        max_norm=0.5,
     )
     optimizer.step()
 
@@ -1930,7 +2023,13 @@ def _save_reward_plot(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MSME-RL GRPO Training")
-    parser.add_argument("--episodes",               type=int,  default=300)
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=300,
+        help="Episode count. Use 30–50 for pilots; 200–300+ for stable curves (and run "
+        "scripts/score_checkpoints.py to pick the best episode_* folder).",
+    )
     parser.add_argument("--port",                   type=int,  default=8000)
     parser.add_argument("--model",                  type=str,  default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--no-unsloth",             action="store_true")

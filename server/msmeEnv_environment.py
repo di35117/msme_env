@@ -39,6 +39,7 @@ try:
     from ..reward import (
         _is_appropriate_tool,
         compute_episode_reward as _compute_episode_reward_fn,
+        consecutive_action_streak_penalty,
     )
     from ..memory import MemoryManager
     from ..message_generator import generate_rm_message
@@ -53,6 +54,7 @@ except (ModuleNotFoundError, ImportError):  # FIXED: Catching both error types s
     from reward import (
         _is_appropriate_tool,
         compute_episode_reward as _compute_episode_reward_fn,
+        consecutive_action_streak_penalty,
     )
     from memory import MemoryManager
     from message_generator import generate_rm_message
@@ -254,9 +256,14 @@ class MSMERLEnvironment(Environment):
             outcome=outcome,
             hidden_profile=hidden_profile,
         )
+        streak_penalty = consecutive_action_streak_penalty(
+            self._episode_history, account_id, action_type
+        )
         guardrail_penalty, guardrail_flags = self._compute_behavior_penalties(account_id, action_type)
         budget_penalty = self._compute_budget_penalty(action.reasoning)
-        step_reward = round(step_reward - guardrail_penalty - budget_penalty, 4)
+        step_reward = round(
+            step_reward - streak_penalty - guardrail_penalty - budget_penalty, 4
+        )
 
         # 3. Endogenous trust update — agent actions change repayment probability
         trust_delta = self._apply_trust_update(
