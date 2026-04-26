@@ -1506,6 +1506,23 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     avg_kl      = total_kl_value / max(1, valid_samples)
     avg_entropy = total_entropy_value / max(1, valid_samples)
 
+    # KL ceiling: skip update when policy has already drifted far from the reference.
+    # Prevents aggressive steps when KL is spiking (classic GRPO instability).
+    KL_CEILING = 0.008
+    if avg_kl > KL_CEILING:
+        optimizer.zero_grad()
+        print(
+            f"    GRPO update SKIPPED: mean KL={avg_kl:.4f} > {KL_CEILING} (KL ceiling) | "
+            f"n={valid_samples}/{len(batch)} | loss={total_loss_value:.4f} | "
+            f"mean_reward={raw_rewards.mean():.4f} | pos_frac={pos_frac:.1%} | H={avg_entropy:.3f}"
+        )
+        return {
+            "loss":     total_loss_value,
+            "kl":       avg_kl,
+            "entropy":  avg_entropy,
+            "skipped":  True,
+        }
+
     # Entropy collapse guard: if mean completion entropy is already very low, the
     # policy is near-deterministic — applying GRPO here tends to over-concentrate
     # mass further. Skip the weight update (discard grads) and let later batches recover.
