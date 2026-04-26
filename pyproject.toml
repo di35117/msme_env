@@ -26,6 +26,8 @@ dependencies = [
     "trl>=0.9.6",
     "torch>=2.11.0",
     "accelerate>=1.13.0",
+    "openenv[core]>=0.1.13",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -46,9 +48,9 @@ packages = [
     "msmeEnv.domains",
     "msmeEnv.domains.msme_startup",
 ]
-package-dir = {
-    "msmeEnv" = ".",
-    "msmeEnv.server" = "server",
-    "msmeEnv.domains" = "domains",
-    "msmeEnv.domains.msme_startup" = "domains/msme_startup",
-}
+
+[tool.setuptools.package-dir]
+msmeEnv = "."
+"msmeEnv.server" = "server"
+"msmeEnv.domains" = "domains"
+"msmeEnv.domains.msme_startup" = "domains/msme_startup"

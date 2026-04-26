@@ -9,8 +9,12 @@ Requires-Dist: uvicorn>=0.24.0
 Requires-Dist: matplotlib>=3.7.0
 Requires-Dist: pydantic>=2.0.0
 Requires-Dist: transformers>=5.6.2
+Requires-Dist: datasets>=2.20.0
+Requires-Dist: trl>=0.9.6
 Requires-Dist: torch>=2.11.0
 Requires-Dist: accelerate>=1.13.0
+Requires-Dist: openenv[core]>=0.1.13
+Requires-Dist: python-dotenv>=1.2.2
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
