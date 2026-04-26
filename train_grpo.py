@@ -2022,20 +2022,65 @@ def _save_reward_plot(
         print(f"  Could not save plots: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MSME-RL GRPO Training")
+    _train_epilog = """
+Jupyter (example):
+  %cd msmeEnv
+  !python -m pip install -U pip
+  !python -m pip install -e .
+  !python train_grpo.py --episodes 30 --max_steps_per_episode 90 --save_every 2 \\
+      --model Qwen/Qwen2.5-1.5B-Instruct --output_dir ./msme_rl_run5
+  !python scripts/score_checkpoints.py --base Qwen/Qwen2.5-1.5B-Instruct \\
+      --checkpoint-dir ./msme_rl_run5 --episodes 5 --seed 42
+  !python scripts/inference_before_after.py --base Qwen/Qwen2.5-1.5B-Instruct \\
+      --trained ./msme_rl_run5/episode_0020 --episodes 5 --max-steps 90 --output-dir ./artifacts
+"""
+    parser = argparse.ArgumentParser(
+        description="MSME-RL GRPO Training",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_train_epilog,
+    )
     parser.add_argument(
         "--episodes",
         type=int,
         default=300,
-        help="Episode count. Use 30–50 for pilots; 200–300+ for stable curves (and run "
-        "scripts/score_checkpoints.py to pick the best episode_* folder).",
+        help="Episode count. Scale: 30–50 = pilot; 200–300+ = smoother metrics. "
+        "After training, run scripts/score_checkpoints.py to pick the best episode_* folder.",
     )
-    parser.add_argument("--port",                   type=int,  default=8000)
-    parser.add_argument("--model",                  type=str,  default="Qwen/Qwen2.5-1.5B-Instruct")
-    parser.add_argument("--no-unsloth",             action="store_true")
-    parser.add_argument("--max_steps_per_episode",  type=int,  default=1080)
-    parser.add_argument("--save_every",             type=int,  default=10)
-    parser.add_argument("--output_dir",             type=str,  default="./msme_rl_checkpoints")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="OpenEnv HTTP port when using MSMERLEnv client (direct env ignores this).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="Qwen/Qwen2.5-1.5B-Instruct",
+        help="HF model id or local path for policy + SFT warm start.",
+    )
+    parser.add_argument(
+        "--no-unsloth",
+        action="store_true",
+        help="Disable Unsloth and use HuggingFace AutoModelForCausalLM + device_map.",
+    )
+    parser.add_argument(
+        "--max_steps_per_episode",
+        type=int,
+        default=1080,
+        help="Max env steps per episode (full horizon ≈ 36*30=1080). Hackathon pilots often use 90.",
+    )
+    parser.add_argument(
+        "--save_every",
+        type=int,
+        default=10,
+        help="Write episode_NNNN checkpoint and plots every N episodes.",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./msme_rl_checkpoints",
+        help="Checkpoints, reward_curve.json/png, training_metrics.png, sft_warmstart/.",
+    )
     args = parser.parse_args()
 
     run_training(
