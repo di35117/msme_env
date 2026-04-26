@@ -1,8 +1,18 @@
+---
+title: Submission Final
+emoji: 🚀
+colorFrom: blue
+colorTo: red
+sdk: docker
+pinned: false
+tags:
+  - openenv
+---
 # 🧠 Linguistic Decoding RL
 
 **A reinforcement learning environment for long-horizon hidden state inference — teaching an LLM agent to decode what entities actually mean, not just what they say.**
 
-- **Hugging Face Space (training runner)**: [msme-training-runner](https://huggingface.co/spaces/di35117/msme-training-runner)
+- **Hugging Face Space (training runner)**: [msme-training-runner](https://huggingface.co/spaces/devgodl/msmeEnv)
 - **Colab notebook (training)**: [Open in Colab](https://colab.research.google.com/drive/1P7YalP0scTuiNrJGBPqwzdPRUkgN4f1w)
 
 ---
