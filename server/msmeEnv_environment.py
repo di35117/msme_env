@@ -38,6 +38,7 @@ try:
     )
     from ..reward import (
         _is_appropriate_tool,
+        compute_episode_reward as _compute_episode_reward_fn,
     )
     from ..memory import MemoryManager
     from ..message_generator import generate_rm_message
@@ -51,6 +52,7 @@ except (ModuleNotFoundError, ImportError):  # FIXED: Catching both error types s
     )
     from reward import (
         _is_appropriate_tool,
+        compute_episode_reward as _compute_episode_reward_fn,
     )
     from memory import MemoryManager
     from message_generator import generate_rm_message
@@ -361,12 +363,30 @@ class MSMERLEnvironment(Environment):
                 self._simulate_spontaneous_defaults()
                 self._current_month = 36
                 done = True
-                episode_reward_breakdown = self._domain_adapter.compute_episode_reward(
-                    self._hidden_profiles,
-                    self._episode_history,
-                    episode_num=self._episode_num,
-                    final_month=36,
-                )
+                episode_reward_breakdown = None
+                try:
+                    episode_reward_breakdown = self._domain_adapter.compute_episode_reward(
+                        self._hidden_profiles,
+                        self._episode_history,
+                        episode_num=self._episode_num,
+                        final_month=36,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[msmeEnv] compute_episode_reward FAILED ep={self._episode_num} "
+                        f"month={self._current_month} steps={self._step_count_this_episode}: {exc}"
+                    )
+                if not episode_reward_breakdown:
+                    print(
+                        f"[msmeEnv] compute_episode_reward returned None/empty ep={self._episode_num} "
+                        f"month={self._current_month} — synthesizing from reward.compute_episode_reward"
+                    )
+                    episode_reward_breakdown = _compute_episode_reward_fn(
+                        self._hidden_profiles,
+                        list(self._episode_history),
+                        episode_num=self._episode_num,
+                        final_month=36,
+                    )
                 self._all_episode_histories.append(self._episode_history)
             else:
                 self._current_month += 1

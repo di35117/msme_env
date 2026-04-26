@@ -397,9 +397,19 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
     # the trained policy is supposed to swap probability mass between.
     COERCIVE = {"initiate_sarfaesi", "file_drt_case", "refer_to_recovery_agent",
                 "send_legal_notice_section13"}
-    INFO     = {"verify_gst_returns", "pull_bank_statements",
-                "check_industry_cluster_stress", "request_investor_update_meeting",
-                "check_startup_ecosystem_signals", "wait_and_observe"}
+    INFO     = {
+        "verify_gst_returns",
+        "pull_bank_statements",
+        "check_industry_cluster_stress",
+        "request_investor_update_meeting",
+        "check_startup_ecosystem_signals",
+        "wait_and_observe",
+        "call_guarantor_investor",
+        "call_promoter_founder",
+        "call_guarantor",
+        "call_guarantor_intermediary",
+        "conduct_cluster_ecosystem_visit",
+    }
 
     def _bucket(dist, keys):
         return sum(dist.get(k, 0.0) for k in keys)

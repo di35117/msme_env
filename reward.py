@@ -184,10 +184,48 @@ def classify_action_outcome(
                 return "payment_received_after_moratorium"
             return "moratorium_to_strategic_msme_defaulter"
 
+        if action_type == "accept_partial_payment":
+            if health > 0.35 and not strategic_default:
+                return "payment_received_after_moratorium"
+            return "account_npa_no_intervention"
+
         if action_type in ("refer_to_recovery_agent", "file_drt_case"):
             if strategic_default:
                 return "cluster_ecosystem_discipline_improved"
             return "sarfaesi_before_restructuring_attempted"
+
+        if action_type == "pull_bank_statements":
+            if random.random() < 0.12:
+                return "tool_execution_failed"
+            if health > 0.4:
+                return "information_verified_genuine_stress"
+            return "behavioral_signal_check_revealed_distress"
+
+        if action_type == "conduct_cluster_ecosystem_visit":
+            cc = hidden_profile.get("cluster_centrality", 0.5)
+            if cc > 0.55:
+                return "cluster_ecosystem_discipline_improved"
+            return "information_verified_genuine_stress"
+
+        if action_type in ("waive_penal_interest", "offer_one_time_settlement"):
+            if health > 0.4 and not strategic_default:
+                return "payment_received_after_moratorium"
+            if strategic_default:
+                return "moratorium_to_strategic_msme_defaulter"
+            return "account_npa_no_intervention"
+
+        # Guarantor / promoter calls — must not default to +0.04 for every state.
+        if action_type in (
+            "call_guarantor_investor",
+            "call_promoter_founder",
+            "call_guarantor",
+            "call_guarantor_intermediary",
+        ):
+            if health > 0.52 and not in_crisis and not strategic_default:
+                return "unnecessary_action_on_current_account"
+            if in_crisis or health < 0.38 or strategic_default:
+                return "behavioral_signal_check_revealed_distress"
+            return "information_verified_genuine_stress"
 
     # -------------------------------------------------------------------------
     # STARTUP outcomes
@@ -239,8 +277,32 @@ def classify_action_outcome(
         if action_type in ("refer_to_recovery_agent", "file_drt_case"):
             return "ecosystem_cascade_ghosting"
 
-    # Default — neutral
-    return "information_verified_genuine_stress"
+        if action_type == "pull_bank_statements":
+            if random.random() < 0.12:
+                return "tool_execution_failed"
+            if runway <= 6:
+                return "behavioral_signal_check_revealed_distress"
+            return "information_verified_genuine_stress"
+
+        if action_type == "conduct_cluster_ecosystem_visit":
+            if runway <= 8:
+                return "behavioral_signal_check_revealed_distress"
+            return "information_verified_genuine_stress"
+
+        if action_type in (
+            "call_guarantor_investor",
+            "call_promoter_founder",
+            "call_guarantor",
+            "call_guarantor_intermediary",
+        ):
+            if runway > 14 and ghosting < 0.35:
+                return "unnecessary_action_on_current_account"
+            if runway <= 5 or ghosting > 0.45:
+                return "behavioral_signal_check_revealed_distress"
+            return "information_verified_genuine_stress"
+
+    # Unmapped action — small penalty so the landscape is not flat +0.04.
+    return "unnecessary_action_on_current_account"
 
 
 # ---------------------------------------------------------------------------
@@ -333,26 +395,22 @@ def compute_episode_reward(
     # Anti-cheat audit metrics for deterministic inspection/reporting.
     anti_cheat_metrics = _build_anti_cheat_metrics(episode_history)
 
-    # Curriculum with smooth transition to avoid brittle early binary behavior.
-    if episode_num < 30:
-        progress = max(0.0, min(1.0, episode_num / 30.0))
-        shaped_signal = (
-            0.40 * (1.0 - npa_rate) +
-            0.30 * recovery_rate +
-            0.20 * relationship_score +
-            0.10 * tool_appropriateness
-        )
-        # Smooth NPA emphasis in early training (was binary / cliff at 0% NPA).
-        survival_signal = 0.5 - npa_rate
-        R = ((1.0 - progress) * survival_signal) + (progress * shaped_signal)
-    else:
-        R = (
-            0.40 * (1.0 - npa_rate)          +
-            0.30 * recovery_rate              +
-            0.20 * relationship_score         +
-            0.10 * tool_appropriateness
-        )
+    # Curriculum blend + shaped objective; shortcut penalty applies from ep 3
+    # (runs of ≤30 episodes previously never paid it before the final episode).
+    progress = max(0.0, min(1.0, episode_num / 30.0))
+    shaped_signal = (
+        0.40 * (1.0 - npa_rate) +
+        0.30 * recovery_rate +
+        0.20 * relationship_score +
+        0.10 * tool_appropriateness
+    )
+    survival_signal = 0.5 - npa_rate
+    R = ((1.0 - progress) * survival_signal) + (progress * shaped_signal)
+    if episode_num >= 3:
         R -= min(0.25, shortcut_penalty)
+
+    unique_used = sum(1 for c in action_frequency.values() if c > 0)
+    R += max(0, unique_used - 4) * 0.01
 
     R *= 5.0
 
@@ -402,8 +460,9 @@ def _compute_shortcut_penalty(episode_history: List[Dict[str, Any]]) -> float:
             switches += 1
         prev_account = account_id
     switch_ratio = switches / max(1, total_steps - 1)
-    # A high switch ratio can indicate shallow probing with no follow-through.
-    thrash_penalty = max(0.0, switch_ratio - 0.70) * 0.25
+    # High switch ratio is normal when covering 30 accounts once per month; only
+    # penalize extreme thrashing (was 0.70 — false positives on healthy policies).
+    thrash_penalty = max(0.0, switch_ratio - 0.92) * 0.25
 
     return round(no_op_penalty + malformed_penalty + spam_penalty + thrash_penalty, 4)
 

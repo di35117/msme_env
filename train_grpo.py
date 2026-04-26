@@ -481,6 +481,52 @@ def run_sft_warm_start(model, tokenizer, output_dir):
             }),
         })
 
+    # ---- CATEGORY 6: Healthy accounts — wait_and_observe (prompt = build_agent_prompt)
+    for aid in list(range(1, 9)) + list(range(21, 27)):
+        acc_type = "msme" if aid <= 20 else "startup"
+        obs_wait: Dict[str, Any] = {
+            "portfolio_summary": {
+                "current_month": 10,
+                "npa_rate": 0.06,
+                "cumulative_reward": 0.12,
+            },
+            "msme_accounts": [],
+            "startup_accounts": [],
+            "active_cluster_alerts": [],
+            "active_ecosystem_alerts": [],
+            "last_action_result": None,
+        }
+        if acc_type == "msme":
+            obs_wait["msme_accounts"] = [
+                {
+                    "account_id": aid,
+                    "account_type": "msme",
+                    "dpd": 0,
+                    "last_message": "Sir this month payment is on track; no issues from our side.",
+                }
+            ]
+        else:
+            obs_wait["startup_accounts"] = [
+                {
+                    "account_id": aid,
+                    "account_type": "startup",
+                    "dpd": 0,
+                    "last_message": "Runway comfortable; weekly investor sync as planned.",
+                }
+            ]
+        raw_data.append({
+            "prompt": build_agent_prompt(obs_wait),
+            "completion": json.dumps({
+                "reasoning": (
+                    "DPD is zero and the message is routine. No intervention needed; "
+                    "wait_and_observe preserves trust and avoids unnecessary_action risk."
+                ),
+                "action_type": "wait_and_observe",
+                "account_id": aid,
+                "parameters": {},
+            }),
+        })
+
     # FIX: Combine prompt + completion into a single "text" field.
     # SFTTrainer with dataset_text_field="text" trains the model on the full sequence.
     # Using only "prompt" as the field was training the model to predict prompts, not actions.
@@ -573,7 +619,7 @@ def run_training(
     port: int = 8000,
     model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
     use_unsloth: bool = True,
-    max_steps_per_episode: int = 300,
+    max_steps_per_episode: int = 1080,
     save_every_n_episodes: int = 10,
     output_dir: str = "./msme_rl_checkpoints",
 ):
@@ -1098,13 +1144,31 @@ def run_training(
                     f"Cum.R={summary.get('cumulative_reward', 0):.3f}"
                 )
 
-        # Episode reward.
-        # Real cumulative reward lives in portfolio_summary.cumulative_reward.
-        # The previous fallback used obs.get("episode_reward_so_far", 0.0) which
-        # is never populated by this env, so RL always saw 0 terminal signal.
-        last_result    = obs.get("last_action_result", {}) or {}
-        ep_breakdown   = last_result.get("episode_reward_breakdown") if last_result else None
-        portfolio_sum  = obs.get("portfolio_summary", {}) or {}
+        # Episode reward — prefer shaped terminal breakdown; never silently mix
+        # scales with cumulative when a canonical breakdown can be synthesized.
+        last_result   = obs.get("last_action_result", {}) or {}
+        ep_breakdown  = last_result.get("episode_reward_breakdown") if last_result else None
+        portfolio_sum = obs.get("portfolio_summary", {}) or {}
+
+        if ep_breakdown is None and use_direct and hasattr(env, "_hidden_profiles") and hasattr(
+            env, "_episode_history"
+        ):
+            try:
+                from reward import compute_episode_reward as _cer_train
+
+                ep_breakdown = _cer_train(
+                    env._hidden_profiles,
+                    list(env._episode_history),
+                    episode,
+                    final_month=36,
+                )
+                print(
+                    f"    TRAINING GUARD: synthesized episode_reward_breakdown "
+                    f"(steps={step_count}, env_done={obs.get('done', False)})"
+                )
+            except Exception as exc:
+                print(f"    TRAINING GUARD: could not synthesize breakdown: {exc}")
+
         episode_reward = (
             ep_breakdown["total"] if ep_breakdown
             else portfolio_sum.get(
@@ -1114,15 +1178,33 @@ def run_training(
         )
         episode_rewards.append(episode_reward)
 
-        # FIX 1: Discounted Return-to-Go (Solves the Vanishing Reward)
-        # Calculates true future value of actions so the NPA rate isn't erased by normalization
+        # Per-step return-to-go from step rewards only (no huge terminal bootstrap
+        # that makes every timestep share the same advantage after normalization).
         gamma = 0.99
-        running_return = episode_reward * 0.5  # Terminal reward
-        
+        running_return = 0.0
         for step_data in reversed(episode_step_data):
             running_return = step_data["step_reward"] + (gamma * running_return)
             step_data["reward"] = running_return
-            
+
+        # Small uniform bonus from shaped terminal (only when breakdown exists).
+        n_ep = len(episode_step_data)
+        if n_ep > 0 and ep_breakdown is not None:
+            term = float(ep_breakdown.get("total", 0.0))
+            bonus = (term / n_ep) * 0.12
+            for step_data in episode_step_data:
+                step_data["reward"] += bonus
+
+        if episode_step_data:
+            import torch as _torch_ep
+
+            _er = _torch_ep.tensor(
+                [s["reward"] for s in episode_step_data], dtype=_torch_ep.float32
+            )
+            _m = _er.mean().item()
+            _sd = _er.std().item() + 1e-8
+            for step_data in episode_step_data:
+                step_data["advantage"] = (step_data["reward"] - _m) / _sd
+
         all_steps.extend(episode_step_data)
 
         elapsed = time.time() - episode_start
@@ -1173,17 +1255,11 @@ def run_training(
             f"{episode_wait_count}/{step_count} ({episode_wait_ratios[-1]:.1%})"
         )
 
-        # FIX 2: Mini-batching (Solves the OOM Crash)
+        # Mini-batching — advantages are normalized **per episode** only (above),
+        # so we do not z-score mix incompatible scales across episodes.
+
         if len(all_steps) >= max_steps_per_episode:
             import torch
-            
-            # Normalize advantages across the ENTIRE episode to ensure a stable baseline
-            all_rewards = torch.tensor([s["reward"] for s in all_steps], dtype=torch.float32)
-            mean_r = all_rewards.mean().item()
-            std_r = all_rewards.std().item() + 1e-8
-            
-            for s in all_steps:
-                s["advantage"] = (s["reward"] - mean_r) / std_r
 
             # FILTERED BEHAVIOR-CLONING + RL.
             # We keep two kinds of training samples:
@@ -1328,6 +1404,56 @@ def run_training(
     return episode_rewards
 
 
+def _preestimate_batch_mean_entropy(
+    model: Any, tokenizer: Any, batch: List[Dict], device: str
+) -> float:
+    """Inference-only mean completion entropy to trigger entropy-recovery updates."""
+    import torch
+    import torch.nn.functional as F
+
+    model.eval()
+    ents: List[float] = []
+    with torch.inference_mode():
+        for step_data in batch:
+            full_text = step_data["prompt"] + step_data["completion"]
+            try:
+                enc = tokenizer(
+                    full_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=1024,
+                    padding=False,
+                )
+                enc = {k: v.to(device) for k, v in enc.items()}
+                prompt_enc = tokenizer(
+                    step_data["prompt"],
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=1024,
+                )
+                prompt_len = min(
+                    prompt_enc["input_ids"].shape[1],
+                    enc["input_ids"].shape[1] - 1,
+                )
+                labels = enc["input_ids"].clone()
+                labels[:, :prompt_len] = -100
+                outputs = model(**enc, labels=labels)
+                logits = outputs.logits
+                shift_logits = logits[:, :-1, :].contiguous()
+                shift_labels = labels[:, 1:].contiguous()
+                shift_mask = (shift_labels != -100).float()
+                mask_sum = shift_mask.sum().clamp(min=1.0)
+                new_log_probs = F.log_softmax(shift_logits, dim=-1)
+                new_probs = new_log_probs.exp()
+                entropy_per_token = -(new_probs * new_log_probs).sum(dim=-1)
+                entropy_term = (entropy_per_token * shift_mask).sum() / mask_sum
+                ents.append(float(entropy_term.item()))
+            except Exception:
+                continue
+    model.train()
+    return sum(ents) / max(1, len(ents))
+
+
 # ---------------------------------------------------------------------------
 # GRPO WEIGHT UPDATE
 # THIS IS THE CRITICAL FIX — THE OLD VERSION WAS A HOLLOW STUB.
@@ -1377,9 +1503,19 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
 
     optimizer = model._grpo_optimizer
 
-    # Read the pre-calculated normalized advantages and raw rewards
+    try:
+        device_s = str(next(model.parameters()).device)
+    except StopIteration:
+        device_s = "cuda"
+    avg_ent_pre = _preestimate_batch_mean_entropy(model, tokenizer, batch, device_s)
+
     advantages = torch.tensor([b["advantage"] for b in batch], dtype=torch.float32)
     raw_rewards = torch.tensor([b["reward"] for b in batch], dtype=torch.float32)
+
+    ENT_COLLAPSE_THRESHOLD = 0.40
+    entropy_recovery = avg_ent_pre < ENT_COLLAPSE_THRESHOLD
+    if entropy_recovery:
+        advantages = torch.zeros(len(batch), dtype=torch.float32)
 
     model.train()
     optimizer.zero_grad()
@@ -1390,17 +1526,8 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     import torch.nn.functional as F
 
     # Loss = pg_loss + kl_coef * KL(current || reference) - ent_coef * entropy
-    # KL_COEF history:
-    #   0.05 → too weak, policy drifted to KL=1.0 and degenerated
-    #   0.20 → too strong, policy frozen at KL=0.01 (no learning)
-    #   0.10 → loose enough for movement, strong enough to keep the format
-    # ENT_COEF history:
-    #   0.05 → entropy CLIMBED 0.74 → 0.84 over 10 ep, reward stayed flat at -10
-    #          (exploration bonus was fighting the policy gradient)
-    #   0.01 → small enough to let entropy fall as policy commits, big enough
-    #          to prevent collapse to a single action
-    KL_COEF  = 0.10
-    ENT_COEF = 0.01
+    KL_COEF  = 0.0 if entropy_recovery else 0.10
+    ENT_COEF = 0.05 if entropy_recovery else 0.01
 
     total_kl_value      = 0.0
     total_entropy_value = 0.0
@@ -1523,38 +1650,26 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             "skipped":  True,
         }
 
-    # Entropy collapse guard: if mean completion entropy is already very low, the
-    # policy is near-deterministic — applying GRPO here tends to over-concentrate
-    # mass further. Skip the weight update (discard grads) and let later batches recover.
-    ENT_COLLAPSE_THRESHOLD = 0.40
-    if avg_entropy < ENT_COLLAPSE_THRESHOLD:
-        optimizer.zero_grad()
-        print(
-            f"    GRPO update SKIPPED: mean H={avg_entropy:.3f} < {ENT_COLLAPSE_THRESHOLD} "
-            f"(entropy collapse guard) | n={valid_samples}/{len(batch)} | "
-            f"loss={total_loss_value:.4f} | mean_reward={raw_rewards.mean():.4f} | "
-            f"pos_frac={pos_frac:.1%} | KL={avg_kl:.4f}"
-        )
-        return {
-            "loss":     total_loss_value,
-            "kl":       avg_kl,
-            "entropy":  avg_entropy,
-            "skipped":  True,
-        }
-
     clip_grad_norm_(
         [p for p in model.parameters() if p.requires_grad],
         max_norm=1.0,
     )
     optimizer.step()
 
-    print(
-        f"    GRPO update | n={valid_samples}/{len(batch)} | "
-        f"loss={total_loss_value:.4f} | "
-        f"mean_reward={raw_rewards.mean():.4f} | "
-        f"pos_frac={pos_frac:.1%} | "
-        f"KL={avg_kl:.4f} | H={avg_entropy:.3f}"
-    )
+    if entropy_recovery:
+        print(
+            f"    GRPO entropy recovery (H_probe={avg_ent_pre:.3f}) | n={valid_samples}/{len(batch)} | "
+            f"loss={total_loss_value:.4f} | mean_reward={raw_rewards.mean():.4f} | "
+            f"pos_frac={pos_frac:.1%} | KL={avg_kl:.4f} | H={avg_entropy:.3f}"
+        )
+    else:
+        print(
+            f"    GRPO update | n={valid_samples}/{len(batch)} | "
+            f"loss={total_loss_value:.4f} | "
+            f"mean_reward={raw_rewards.mean():.4f} | "
+            f"pos_frac={pos_frac:.1%} | "
+            f"KL={avg_kl:.4f} | H={avg_entropy:.3f}"
+        )
     return {
         "loss":    total_loss_value,
         "kl":      avg_kl,
