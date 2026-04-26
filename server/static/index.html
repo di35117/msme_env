@@ -334,6 +334,7 @@
   </div>
   <nav>
     <a href="#metrics">Training Metrics</a>
+    <a href="#before-after">Before vs After</a>
     <a href="#evaluation">Evaluation</a>
     <a href="#demo">Live Demo</a>
     <a href="https://github.com" id="github-link">GitHub</a>
@@ -366,12 +367,97 @@
   <section>
     <h2>Headline Metrics</h2>
     <div class="kpis" id="kpis">
-      <div class="kpi"><div class="kpi-label">Episodes Trained</div><div class="kpi-value mono" id="kpi-episodes">28</div><div class="kpi-sub">GRPO + KL anchor + entropy bonus</div></div>
-      <div class="kpi"><div class="kpi-label">Best Reward</div><div class="kpi-value mono good" id="kpi-best">+0.39</div><div class="kpi-sub">Episode 16</div></div>
-      <div class="kpi"><div class="kpi-label">Improvement</div><div class="kpi-value mono good" id="kpi-improvement">+4.20</div><div class="kpi-sub">vs Episode 1 (-3.81)</div></div>
-      <div class="kpi"><div class="kpi-label">Pure-Model Peak</div><div class="kpi-value mono" id="kpi-purepeak">-0.86</div><div class="kpi-sub">Episode 5, 0% parse failure</div></div>
-      <div class="kpi"><div class="kpi-label">Min Parse Failure</div><div class="kpi-value mono good">0%</div><div class="kpi-sub">eps 1-7, format locked</div></div>
-      <div class="kpi"><div class="kpi-label">Action Space</div><div class="kpi-value mono">21</div><div class="kpi-sub">+ 30 accounts</div></div>
+      <div class="kpi"><div class="kpi-label">Episodes Trained</div><div class="kpi-value mono" id="kpi-episodes">—</div><div class="kpi-sub">from reward_curve.json</div></div>
+      <div class="kpi"><div class="kpi-label">Best Reward</div><div class="kpi-value mono good" id="kpi-best">—</div><div class="kpi-sub">max over training</div></div>
+      <div class="kpi"><div class="kpi-label">Final Reward</div><div class="kpi-value mono" id="kpi-final">—</div><div class="kpi-sub">last episode</div></div>
+      <div class="kpi"><div class="kpi-label">Mean NPA (train)</div><div class="kpi-value mono" id="kpi-npa">—</div><div class="kpi-sub">avg over episodes</div></div>
+      <div class="kpi"><div class="kpi-label">Mean Trust (train)</div><div class="kpi-value mono good" id="kpi-trust">—</div><div class="kpi-sub">avg over episodes</div></div>
+      <div class="kpi"><div class="kpi-label">Action Space</div><div class="kpi-value mono">22</div><div class="kpi-sub">+ 30 accounts</div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       BEFORE / AFTER (from inference_before_after.json) + live-style replay
+       ============================================================ -->
+  <section id="before-after">
+    <h2>Before vs After RL (eval bundle)</h2>
+    <p style="font-size: 13px; color: var(--text-2); max-width: 920px; margin: -8px 0 16px;">
+      Populated from <span class="mono">artifacts/inference_before_after.json</span> (run
+      <span class="mono">scripts/inference_before_after.py</span>) and synced into
+      <span class="mono">static/data/</span> at server start. Use <strong>Replay eval sweep</strong> for a screen-recording-friendly animation of matched-seed episodes.
+    </p>
+    <div class="grid grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Aggregate (mean over eval seeds)</h3>
+          <div class="caption" id="before-after-caption">loading…</div>
+        </div>
+        <div class="panel-body">
+          <div class="kpis" style="grid-template-columns: repeat(2, 1fr);">
+            <div class="kpi">
+              <div class="kpi-label">Mean reward — base</div>
+              <div class="kpi-value mono" id="cmp-base-reward">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Mean reward — trained</div>
+              <div class="kpi-value mono good" id="cmp-trained-reward">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Mean NPA — base</div>
+              <div class="kpi-value mono" id="cmp-base-npa">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Mean NPA — trained</div>
+              <div class="kpi-value mono good" id="cmp-trained-npa">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Mean trust — base</div>
+              <div class="kpi-value mono" id="cmp-base-trust">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Mean trust — trained</div>
+              <div class="kpi-value mono good" id="cmp-trained-trust">—</div>
+            </div>
+          </div>
+          <div class="panel-body" style="padding: 12px 0 0; border-top: 1px solid var(--border); margin-top: 12px;">
+            <div class="kpi-label" style="margin-bottom: 8px;">Δ trained − base</div>
+            <pre class="json" id="cmp-deltas" style="max-height: 120px;">—</pre>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Replay (matched seeds)</h3>
+          <div class="caption">animated row / video demo</div>
+        </div>
+        <div class="panel-body">
+          <div class="row" style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
+            <button class="btn btn-primary" type="button" id="replay-start">Replay eval sweep</button>
+            <button class="btn" type="button" id="replay-stop">Stop</button>
+          </div>
+          <div class="state-box" id="replay-status" style="margin-bottom: 10px;">Idle</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <div class="kpi-label">Base (before RL)</div>
+              <pre class="json" id="replay-base-row" style="max-height: 160px;">—</pre>
+            </div>
+            <div>
+              <div class="kpi-label">Trained (after RL)</div>
+              <pre class="json" id="replay-trained-row" style="max-height: 160px;">—</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top: 16px;">
+      <div class="panel-head">
+        <h3>Training reward (from reward_curve.json)</h3>
+        <div class="caption">live canvas — same data as your submission curves</div>
+      </div>
+      <div class="panel-body">
+        <canvas id="trainingCurveCanvas" width="900" height="220" style="width:100%;max-height:240px;background:var(--bg-1);border-radius:4px;border:1px solid var(--border);"></canvas>
+        <p class="caption" id="training-curve-hint" style="margin-top:8px;">Load reward_curve.json into static/data at server start (train → checkpoints or artifacts).</p>
+      </div>
     </div>
   </section>
 
@@ -420,8 +506,21 @@
 
       <div class="panel">
         <div class="panel-head">
+          <h3>Per-episode base vs trained</h3>
+          <div class="caption">from generate_judge_artifacts.py</div>
+        </div>
+        <div class="panel-body">
+          <img class="plot-img" src="/static/plots/per_episode_base_vs_trained.png"
+               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+               alt="Per-episode base vs trained"/>
+          <div class="plot-missing" style="display:none">per_episode_base_vs_trained.png not found.</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
           <h3>Before RL vs After RL</h3>
-          <div class="caption">same Qwen3-1.7B, before vs after GRPO</div>
+          <div class="caption">same checkpoint family, before vs after GRPO</div>
         </div>
         <div class="panel-body">
           <img class="plot-img" src="/static/plots/inference_before_after.png"
@@ -710,6 +809,159 @@ async function doStep() {
 
 document.getElementById("reset-btn").addEventListener("click", doReset);
 document.getElementById("step-btn").addEventListener("click", doStep);
+
+// --- Static URL prefix (/web on Hugging Face Spaces iframe) ---
+function staticBase() {
+  return location.pathname.indexOf("/web") === 0 ? "/web/static" : "/static";
+}
+document.querySelectorAll("img.plot-img").forEach(function (img) {
+  var s = img.getAttribute("src");
+  if (s && s.indexOf("/static/") === 0) {
+    img.src = staticBase() + s.slice("/static".length);
+  }
+});
+
+// --- Dashboard: reward_curve + inference_before_after (for demo video) ---
+var _replayTimer = null;
+var _inferenceAudit = null;
+
+function fmtPct(x) {
+  if (x == null || isNaN(x)) return "—";
+  return (Number(x) * 100).toFixed(1) + "%";
+}
+function fmt3(x) {
+  if (x == null || isNaN(x)) return "—";
+  var n = Number(x);
+  return (n >= 0 ? "+" : "") + n.toFixed(3);
+}
+
+async function fetchJson(path) {
+  var r = await fetch(staticBase() + path, { cache: "no-store" });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function drawTrainingCurve(rc) {
+  var canvas = document.getElementById("trainingCurveCanvas");
+  if (!canvas || !rc || !rc.rewards || !rc.rewards.length) return;
+  var ctx = canvas.getContext("2d");
+  var w = canvas.width, h = canvas.height;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--bg-1").trim() || "#0d1117";
+  ctx.fillRect(0, 0, w, h);
+  var vals = rc.rewards;
+  var min = Math.min.apply(null, vals.concat([0]));
+  var max = Math.max.apply(null, vals.concat([0.001]));
+  var span = Math.max(0.001, max - min);
+  var pad = 28;
+  var xStep = (w - pad * 2) / Math.max(1, vals.length - 1);
+  ctx.strokeStyle = "#243042";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  var y0 = h - pad - ((0 - min) / span) * (h - pad * 2);
+  ctx.moveTo(pad, y0);
+  ctx.lineTo(w - pad, y0);
+  ctx.stroke();
+  ctx.strokeStyle = "#59a0ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  vals.forEach(function (v, i) {
+    var x = pad + i * xStep;
+    var y = h - pad - ((v - min) / span) * (h - pad * 2);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  var hint = document.getElementById("training-curve-hint");
+  if (hint) hint.textContent = "Episodes: " + vals.length + " · min " + min.toFixed(2) + " · max " + max.toFixed(2);
+}
+
+function fillHeadlineFromRewardCurve(rc) {
+  if (!rc || !rc.rewards || !rc.rewards.length) return;
+  var R = rc.rewards;
+  var ep = R.length;
+  var best = Math.max.apply(null, R);
+  var last = R[R.length - 1];
+  var el = function (id, t) { var e = document.getElementById(id); if (e) e.textContent = t; };
+  el("kpi-episodes", String(ep));
+  el("kpi-best", fmt3(best));
+  el("kpi-final", fmt3(last));
+  if (rc.npa_rates && rc.npa_rates.length) {
+    var s = 0; rc.npa_rates.forEach(function (x) { s += x; });
+    el("kpi-npa", fmtPct(s / rc.npa_rates.length));
+  }
+  if (rc.trust_scores && rc.trust_scores.length) {
+    var t = 0; rc.trust_scores.forEach(function (x) { t += x; });
+    el("kpi-trust", (t / rc.trust_scores.length).toFixed(3));
+  }
+}
+
+function fillBeforeAfter(audit) {
+  _inferenceAudit = audit;
+  var cap = document.getElementById("before-after-caption");
+  if (!audit) {
+    if (cap) cap.textContent = "No inference_before_after.json — run inference script";
+    return;
+  }
+  var b = audit.before_rl || {};
+  var a = audit.after_rl || {};
+  var cfg = audit.config || {};
+  if (cap) cap.textContent = (cfg.episodes || "?") + " eval episodes · max_steps " + (cfg.max_steps != null ? cfg.max_steps : "?");
+  var el = function (id, t) { var e = document.getElementById(id); if (e) e.textContent = t; };
+  el("cmp-base-reward", fmt3(b.mean_reward));
+  el("cmp-trained-reward", fmt3(a.mean_reward));
+  el("cmp-base-npa", fmtPct(b.mean_npa));
+  el("cmp-trained-npa", fmtPct(a.mean_npa));
+  el("cmp-base-trust", b.mean_trust != null ? Number(b.mean_trust).toFixed(3) : "—");
+  el("cmp-trained-trust", a.mean_trust != null ? Number(a.mean_trust).toFixed(3) : "—");
+  var d = document.getElementById("cmp-deltas");
+  if (d) d.textContent = JSON.stringify(audit.improvement_after_rl || {}, null, 2);
+}
+
+function stopReplay() {
+  if (_replayTimer) {
+    clearInterval(_replayTimer);
+    _replayTimer = null;
+  }
+  var st = document.getElementById("replay-status");
+  if (st) st.textContent = "Stopped";
+}
+
+function startReplay() {
+  stopReplay();
+  if (!_inferenceAudit || !_inferenceAudit.before_rl || !_inferenceAudit.after_rl) {
+    alert("No inference audit loaded");
+    return;
+  }
+  var pb = _inferenceAudit.before_rl.per_episode || [];
+  var pa = _inferenceAudit.after_rl.per_episode || [];
+  var n = Math.min(pb.length, pa.length);
+  if (!n) return;
+  var i = 0;
+  var st = document.getElementById("replay-status");
+  var rb = document.getElementById("replay-base-row");
+  var rt = document.getElementById("replay-trained-row");
+  _replayTimer = setInterval(function () {
+    if (st) st.textContent = "Eval index " + (i + 1) + " / " + n + " (seed " + (pb[i].seed != null ? pb[i].seed : "?") + ")";
+    if (rb) rb.textContent = JSON.stringify(pb[i], null, 2);
+    if (rt) rt.textContent = JSON.stringify(pa[i], null, 2);
+    i += 1;
+    if (i >= n) {
+      stopReplay();
+      if (st) st.textContent = "Done — " + n + " matched seeds";
+    }
+  }, 650);
+}
+
+document.getElementById("replay-start").addEventListener("click", startReplay);
+document.getElementById("replay-stop").addEventListener("click", stopReplay);
+
+(async function loadDashboardArtifacts() {
+  var rc = await fetchJson("/data/reward_curve.json");
+  drawTrainingCurve(rc);
+  fillHeadlineFromRewardCurve(rc);
+  var inf = await fetchJson("/data/inference_before_after.json");
+  fillBeforeAfter(inf);
+})();
 </script>
 
 </body>
