@@ -1,3 +1,13 @@
+---
+title: msmeEnv
+emoji: 🧠
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+pinned: false
+app_port: 8000
+---
+
 # 🧠 Linguistic Decoding RL
 
 **A reinforcement learning environment for long-horizon hidden state inference — teaching an LLM agent to decode what entities actually mean, not just what they say.**
