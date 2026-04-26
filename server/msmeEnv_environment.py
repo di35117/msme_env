@@ -299,7 +299,8 @@ class MSMERLEnvironment(Environment):
             trust_delta=trust_delta,
         )
 
-        # 7. Log to episode history
+        # 7. Log to episode history (used by reward.compute_episode_reward for NPA,
+        # ToolFit, anti-cheat — action_type + account_type drive _is_appropriate_tool).
         step_record = {
             "episode": self._episode_num,
             "month": self._current_month,
@@ -329,32 +330,39 @@ class MSMERLEnvironment(Environment):
             )
 
         # 9. Advance month after every 30 actions (one action per account per month)
+        # Horizon is exactly 36 months. When the 30th action of month 36 completes,
+        # the episode must end with done=True and month reported as 36 — never
+        # incrementing to a fictitious "month 37" (that corrupted logs, NPA, and RL).
         done = False
         episode_reward_breakdown = None
         if self._step_count_this_episode % 30 == 0:
-            self._current_month += 1
-            # Refresh working memory
-            self._memory.working.refresh(
-                month=self._current_month,
-                episode=self._episode_num,
-                hidden_profiles=self._hidden_profiles,
-                observable_states=self._observable_states,
-                recent_actions=self._episode_history[-10:],
-                active_cluster_alerts=self._active_cluster_alerts,
-                active_ecosystem_alerts=self._active_ecosystem_alerts,
-            )
-            # Simulate spontaneous defaults for overdue accounts
-            self._simulate_spontaneous_defaults()
-
-        if self._current_month > 36:
-            done = True
-            episode_reward_breakdown = self._domain_adapter.compute_episode_reward(
-                self._hidden_profiles,
-                self._episode_history,
-                episode_num=self._episode_num,
-                final_month=36,
-            )
-            self._all_episode_histories.append(self._episode_history)
+            if self._current_month >= 36:
+                # Completed 30/30 actions in the final month: terminate here.
+                # _simulate_spontaneous_defaults() expects self._current_month == M+1
+                # so "prior" month is M (same pattern as a normal month advance).
+                self._current_month += 1
+                self._simulate_spontaneous_defaults()
+                self._current_month = 36
+                done = True
+                episode_reward_breakdown = self._domain_adapter.compute_episode_reward(
+                    self._hidden_profiles,
+                    self._episode_history,
+                    episode_num=self._episode_num,
+                    final_month=36,
+                )
+                self._all_episode_histories.append(self._episode_history)
+            else:
+                self._current_month += 1
+                self._memory.working.refresh(
+                    month=self._current_month,
+                    episode=self._episode_num,
+                    hidden_profiles=self._hidden_profiles,
+                    observable_states=self._observable_states,
+                    recent_actions=self._episode_history[-10:],
+                    active_cluster_alerts=self._active_cluster_alerts,
+                    active_ecosystem_alerts=self._active_ecosystem_alerts,
+                )
+                self._simulate_spontaneous_defaults()
 
         # 10. Build memory context for this observation
         episodic_ctx, semantic_ctx = self._memory.build_context(
