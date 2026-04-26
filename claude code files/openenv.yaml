@@ -1,7 +1,0 @@
-spec_version: 1
-name: linguistic-decoding
-type: space
-description: "Domain-agnostic RL environment for linguistic decoding under hidden state. Agents learn to infer latent intent from asymmetric speaker communication — understatement, overstatement, deflection — purely from reward signal. Demo domain: MSME + startup credit management."
-runtime: fastapi
-app: server.app:app
-port: 8000
