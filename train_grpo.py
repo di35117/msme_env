@@ -1249,7 +1249,7 @@ def run_training(
                     episode_kls.append(episode_kl_sum / update_count)
                     episode_entropies.append(episode_entropy_sum / update_count)
 
-            # Step the LR scheduler once per episode (decays lr from 2e-6 → ~0.6e-6
+            # Step the LR scheduler once per episode (decays lr from 1e-6 → ~0.3e-6
             # over 30 episodes) so updates get gentler as the policy commits.
             if hasattr(model, "_grpo_scheduler"):
                 try:
@@ -1360,13 +1360,11 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             return
         # LR history:
         #   1e-5 → policy collapsed (KL → 1.0, parse → 90% in 5 ep)
-        #   3e-6 → policy froze   (KL ≈ 0.01 over 5 ep, no learning)
-        #   5e-6 → middle ground BUT entropy climbed and reward stayed flat
-        #   2e-6 + LinearLR decay (1.0 → 0.3 over 30 ep) → smoother updates,
-        #          policy commits late instead of oscillating
+        #   2e-6 → too aggressive: ep1 +reward → big advantages → overshoot, H collapse, KL spike
+        #   1e-6 + LinearLR (1.0 → 0.3 over 30 ep) + entropy guard → gentler, less oscillation
         model._grpo_optimizer = torch.optim.AdamW(
             trainable,
-            lr=2e-6,
+            lr=1e-6,
             weight_decay=0.01,
         )
         model._grpo_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -1375,7 +1373,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
             end_factor=0.3,
             total_iters=30,
         )
-        print("    GRPO optimizer initialized (lr=2e-6 with LinearLR decay → 0.6e-6)")
+        print("    GRPO optimizer initialized (lr=1e-6 with LinearLR decay → 0.3e-6)")
 
     optimizer = model._grpo_optimizer
 
@@ -1500,31 +1498,50 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
                 torch.cuda.empty_cache()
             continue
 
-    if valid_samples > 0:
-        # Gradient clipping prevents large updates from destabilising training
-        clip_grad_norm_(
-            [p for p in model.parameters() if p.requires_grad],
-            max_norm=1.0,
-        )
-        optimizer.step()
-
-        pos_frac    = (advantages > 0).float().mean().item()
-        avg_kl      = total_kl_value / max(1, valid_samples)
-        avg_entropy = total_entropy_value / max(1, valid_samples)
-        print(
-            f"    GRPO update | n={valid_samples}/{len(batch)} | "
-            f"loss={total_loss_value:.4f} | "
-            f"mean_reward={raw_rewards.mean():.4f} | "
-            f"pos_frac={pos_frac:.1%} | "
-            f"KL={avg_kl:.4f} | H={avg_entropy:.3f}"
-        )
-    else:
+    if valid_samples == 0:
         print("    GRPO update skipped: no valid samples")
         return {"loss": 0.0, "kl": 0.0, "entropy": 0.0}
+
+    pos_frac    = (advantages > 0).float().mean().item()
+    avg_kl      = total_kl_value / max(1, valid_samples)
+    avg_entropy = total_entropy_value / max(1, valid_samples)
+
+    # Entropy collapse guard: if mean completion entropy is already very low, the
+    # policy is near-deterministic — applying GRPO here tends to over-concentrate
+    # mass further. Skip the weight update (discard grads) and let later batches recover.
+    ENT_COLLAPSE_THRESHOLD = 0.40
+    if avg_entropy < ENT_COLLAPSE_THRESHOLD:
+        optimizer.zero_grad()
+        print(
+            f"    GRPO update SKIPPED: mean H={avg_entropy:.3f} < {ENT_COLLAPSE_THRESHOLD} "
+            f"(entropy collapse guard) | n={valid_samples}/{len(batch)} | "
+            f"loss={total_loss_value:.4f} | mean_reward={raw_rewards.mean():.4f} | "
+            f"pos_frac={pos_frac:.1%} | KL={avg_kl:.4f}"
+        )
+        return {
+            "loss":     total_loss_value,
+            "kl":       avg_kl,
+            "entropy":  avg_entropy,
+            "skipped":  True,
+        }
+
+    clip_grad_norm_(
+        [p for p in model.parameters() if p.requires_grad],
+        max_norm=1.0,
+    )
+    optimizer.step()
+
+    print(
+        f"    GRPO update | n={valid_samples}/{len(batch)} | "
+        f"loss={total_loss_value:.4f} | "
+        f"mean_reward={raw_rewards.mean():.4f} | "
+        f"pos_frac={pos_frac:.1%} | "
+        f"KL={avg_kl:.4f} | H={avg_entropy:.3f}"
+    )
     return {
         "loss":    total_loss_value,
-        "kl":      total_kl_value / max(1, valid_samples),
-        "entropy": total_entropy_value / max(1, valid_samples),
+        "kl":      avg_kl,
+        "entropy": avg_entropy,
     }
 
 
