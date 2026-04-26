@@ -134,6 +134,25 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
 
 We trained for 30 episodes with each episode capped at 90 steps, fine-tuning a **Qwen 1.5B** model with GRPO on this reinforcement learning task. Both numbers reflect resource constraints, not design ceilings — the environment is built for trajectories of 300–500 steps where the long-horizon dynamics are fully expressed. Within these limits, the goal was proof of concept: does the reward signal improve, does the policy stabilize, does the agent develop domain-differentiated strategies across MSME and startup profiles.
 
+You can reproduce and explore the run here:
+
+- **Hugging Face Space (training runner)**: [msme-training-runner](https://huggingface.co/spaces/di35117/msme-training-runner)
+- **Colab notebook (training)**: [Open in Colab](https://colab.research.google.com/drive/1P7YalP0scTuiNrJGBPqwzdPRUkgN4f1w)
+
+### All Training Curves (Artifacts)
+
+| Reward curve | Rolling mean reward |
+|:---:|:---:|
+| ![training reward](./artifacts/training_reward.jpg) | ![reward curve](./artifacts/reward_curve.png.jpg) |
+
+| Base vs trained (per-episode) | Training metrics dashboard |
+|:---:|:---:|
+| ![base vs trained](./artifacts/per_episode_base_vs_train.jpg) | ![training metrics](./artifacts/training_metric.jpg) |
+
+| Policy loss | GRPO policy loss |
+|:---:|:---:|
+| ![policy loss](./artifacts/Policy%20Loss.jpg) | ![grpo policy loss](./artifacts/GRPO%20Policy%20Loss.jpg) |
+
 
 
 The answer to all three is yes.
