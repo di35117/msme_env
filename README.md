@@ -1,461 +1,168 @@
----
-title: Linguistic Decoding RL Environment
-emoji: "🧠"
-colorFrom: blue
-colorTo: purple
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
-  - reinforcement-learning
-  - linguistic-decoding
----
+# 🧠 Linguistic Decoding RL
 
-# Linguistic Decoding RL
+> **An AI that learns to catch what people aren't saying — then decides what to do about it.**
 
-A reinforcement learning environment where an LLM learns to decode hidden state from language and behavior over time, then select the right intervention action.
-
-This project is built around a concrete **MSME + startup credit demo** (India), while using a modular architecture that can generalize to other linguistic-decoding domains.
+Not a chatbot. Not a classifier. A decision-making agent trained inside a world where the truth is always slightly hidden.
 
 ---
 
-## Live Demo, Plots, and Dashboard
+## The Problem Nobody Talks About
 
-The deployed Hugging Face Space serves a single-page dashboard at the Space root URL (`/`). It renders all training plots and lets you drive the environment manually one step at a time.
+People lie. Or rather — they *manage* what they say.
 
-| Surface | URL |
-|---|---|
-| **Dashboard (HF Space)** | `https://huggingface.co/spaces/<your-handle>/msmeEnv` (Space root) |
-| **Demo step API** | `POST /demo/step` — `{action_type, account_id, parameters}` |
-| **Demo reset API** | `POST /demo/reset` |
-| **Standard OpenEnv API** | `POST /reset`, `POST /step`, `GET /schema`, `WS /ws` |
+A small business owner who's two months from defaulting will tell you "things are a bit slow."  
+A startup founder who hasn't talked to an investor in three months will say "we're in active conversations."
 
-To preview locally:
+Both sound fine. Both are not fine.
+
+Regular AI reads the sentence and moves on. **This agent learns that the sentence is only half the picture.**
+
+The other half? Payment delays. GST filing gaps. What the businesses *around* them are doing. How their story has drifted over the past few months. That's where the real signal lives.
+
+---
+
+## What's Actually Being Built
+
+An RL environment where a language model has to:
+
+1. Read a message from a borrower
+2. Look at their behavior (not just their words)
+3. Pick the right move from 21 possible actions — across 30 accounts, over 36 months
+4. Live with the consequences
+
+The reward doesn't come from saying something smart. It comes from outcomes — did the loan get recovered? Did trust hold? Did you avoid blowing up the entire lending cluster because you got aggressive with the wrong person?
+
+**The model only gets good if it actually understands what's going on.**
+
+---
+
+## The Setup (India MSME + Startup Credit)
+
+- **20 MSME accounts** — small businesses, connected to each other, prone to understate stress
+- **10 startup accounts** — prone to overstate health, completely different risk profile
+- **21 action types** — from `verify_gst_returns` to `grant_moratorium` to `initiate_sarfaesi`
+- **36-month horizon** — decisions made now have consequences three months later
+
+The same message, sent by an MSME owner versus a startup founder, means something different. Learning that distinction is the whole game.
+
+---
+
+## What Happened After 28 Training Episodes
+
+Trained on a Colab T4. Small model (Qwen2.5-1.5B). Here's what changed:
+
+| What we measured | Before training | After training |
+|---|---|---|
+| Reward per episode | ≈ −3.8 (random noise) | peak ≈ +0.39 |
+| Parse failures | frequent | ≈ 0% by episode 5 |
+| SARFAESI used on startups | happens | basically never |
+
+That last one is the most interesting. **Nobody told the model not to use a collateral recovery tool on a startup.** The reward structure made it figure out that it's a bad idea — startups have no collateral, founders leave, ecosystem trust collapses. The model learned the *why* from the outcomes, not from a rule.
+
+The trained policy concentrates on `verify_gst_returns`, `grant_moratorium`, and `request_investor_update_meeting`. The random baseline fires everything equally. That gap — that selectivity — is what real understanding looks like in this environment.
+
+---
+
+## Why LLMs Are Bad at This (Out of the Box)
+
+Current language models are excellent at one thing: **producing text that sounds right.**
+
+This environment cares about something else entirely — whether the decision was *correct*. That's a different optimization target, and it creates real gaps:
+
+**They don't hold behavioral memory.**  
+GST filings from three months ago matter right now. A base LLM has no way to accumulate and weight that kind of temporal signal into a coherent belief about what's actually happening.
+
+**They optimize for fluent output, not for outcomes.**  
+Pretraining taught them to generate responses that make sense. This environment rewards NPA prevention, trust preservation, cascade avoidance. Those objectives pull in different directions.
+
+**They miss the asymmetry.**  
+An MSME borrower and a startup founder sending identical messages are usually in completely different situations. A model that treats them the same will be wrong half the time — confidently.
+
+---
+
+## The Anti-Cheat System (This Part Matters)
+
+RL agents are creative about finding loopholes. We closed them explicitly.
+
+**Cluster cascade penalty (`−0.25` per account)**  
+MSME borrowers are networked. Go hard on one high-centrality account and you can trigger defaults across the whole cluster. That costs more than just letting the one account go — so being maximally aggressive stops being the safe play.
+
+**Wrong tool on startups (`−0.15` per use)**  
+Using SARFAESI (a collateral recovery tool) on a startup is *technically allowed* and *practically insane*. The penalty makes right-tool behavior strictly better in expectation. The model learns this fast.
+
+**Shortcut detection at episode end**  
+Spam `wait_and_observe` more than 30% of the time? Deducted. Use one action for 35%+ of all steps? Deducted. The only way to get a high score is to make real, varied, context-appropriate decisions.
+
+**Action-frequency cap**  
+Even if you find a genuinely great action — after the third use per episode, it contributes zero to your score. Diversity isn't optional, it's the only path to a high return.
+
+---
+
+## The Architecture (In Plain Terms)
+
+```
+LLM Policy
+  ↓
+FastAPI server  (handles the RL loop)
+  ↓
+Environment core  (state, episodes, rewards)
+  ↓
+Domain adapter  (MSME + startup specific logic)
+  ↓
+  ├── World generator  (builds the accounts and their hidden state)
+  ├── Reward logic     (the hard-number objective, no LLM judge)
+  ├── Network effects  (who affects who)
+  ├── Message generator (what the borrowers actually say)
+  └── Memory updates   (what the agent gets to remember)
+```
+
+The domain adapter is a swappable layer. Keep all the RL infrastructure, change the domain. Compliance. Escalation. Negotiation. Anything where people are strategically shaping what they say.
+
+---
+
+## Run It
 
 ```bash
+# Local
 uvicorn server.app:app --host 0.0.0.0 --port 8000
-# then open http://localhost:8000/
-```
 
-The dashboard loads any PNGs present in `server/static/plots/` (auto-synced from `artifacts/` and `msme_rl_checkpoints_risk30_q25/` on app startup), so the same screenshots in this README appear live in the UI.
-
----
-
-## Results — 28 Episodes of GRPO Training
-
-> Configuration: Qwen2.5-1.5B-Instruct, GRPO with KL anchor + entropy bonus, learning rate `5e-6`, 8-sample mini-batches. Trained on Colab T4. Full per-episode metrics in `msme_rl_checkpoints_risk30_q25/reward_curve.json`.
-
-### Multi-metric training dashboard
-
-![Training metrics dashboard](artifacts/training_metrics.png)
-
-A 2x3 grid covering everything FAQ Q17 asks for: reward (per-episode + rolling mean), GRPO policy loss, KL vs the frozen SFT reference, completion-token entropy, and parse-failure %. KL stays bounded because of the anchor; entropy stays clearly above zero because of the bonus; parse-failure drops to ≈ 0% within the first few episodes thanks to the JSON prefill + extractor fallback.
-
-### Reward curve
-
-![Reward curve](artifacts/reward_curve.png)
-
-Per-episode and rolling-mean reward across 28 episodes. The curve trends upward from a `≈ −3.8` baseline (random model output) to a peak of `≈ +0.39` once the policy starts choosing context-appropriate actions.
-
-### Policy loss
-
-![Policy loss](artifacts/loss_curve.png)
-
-GRPO mean policy loss per episode. Loss hovers around zero rather than blowing up — that's the signature of the KL anchor doing its job.
-
-### Before RL vs After RL — same model, same seeds
-
-![Before RL vs After RL](artifacts/inference_before_after.png)
-
-The exact same Qwen3-1.7B is loaded twice — first with off-the-shelf weights (Before RL), then with the GRPO-fine-tuned weights from `episode_0030` (After RL). Both are run on identical fixed seeds against `MSMERLEnvironment`. Three panels: cumulative reward, final NPA %, final average trust score. Generated by `scripts/inference_before_after.py`.
-
-### Random baseline vs trained policy
-
-![Trained vs random baseline](artifacts/inference_comparison.png)
-
-For an absolute floor reference: a uniformly-random policy (one of 21 action types × 30 accounts) on the same seeds. The trained policy beats both the random baseline *and* the untrained base model. Generated by `inference.ipynb`.
-
-### What the trained policy actually does
-
-![Action distribution: random vs trained](artifacts/inference_action_distribution.png)
-
-The trained policy concentrates probability on `verify_gst_returns`, `grant_moratorium`, and `request_investor_update_meeting` while almost never firing `initiate_sarfaesi` on a startup — exactly the asymmetric behaviour the reward shaping was designed to teach. The random baseline is a uniform mixture for comparison.
-
----
-
-## Why This Exists
-
-In high-stakes communication, people rarely state reality directly.
-
-- MSME borrowers may **understate** stress.
-- Startup founders may **overstate** health.
-- Surface text can be misleading without behavioral and temporal context.
-
-So this is not sentiment classification and not a chatbot.
-It is a sequential decision problem with hidden state and delayed outcomes.
-
----
-
-## What The Agent Learns
-
-At each step, the agent:
-
-1. observes messages + behavioral proxies,
-2. chooses a policy action,
-3. receives step reward and delayed episode reward,
-4. updates behavior over episodes.
-
-The learning target is robust linguistic decoding under partial observability.
-
----
-
-## Architecture
-
-### High-Level Flow
-
-```text
-Agent Policy (LLM)
-        |
-        v
-OpenEnv Server (`server/app.py`)
-        |
-        v
-Environment Core (`server/msmeEnv_environment.py`)
-        |
-        v
-Domain Adapter Registry (`domains/__init__.py`)
-        |
-        v
-MSME+Startup Adapter (`domains/msme_startup/adapter.py`)
-        |
-        +--> World generation (`world_generator.py`)
-        +--> Reward logic (`reward.py`)
-        +--> Network effects (`network.py`)
-        +--> Message generation (`message_generator.py`)
-        +--> Memory updates (`memory.py`)
-```
-
-### Design Principle
-
-- **Core environment** handles episode lifecycle, state orchestration, OpenEnv contracts.
-- **Domain adapter** encapsulates domain-specific semantics.
-- **Domain logic modules** keep reward/world/network/message behavior explicit and testable.
-
-This lets you keep a strong concrete demo while preserving extensibility.
-
----
-
-## Domain Design (Current Demo)
-
-Current active domain: `msme_startup`
-
-- 20 MSME accounts + 10 startup accounts
-- 36-month horizon
-- 21+ action types
-- two interacting topologies:
-  - MSME cluster contagion
-  - startup ecosystem propagation
-
-This creates asymmetric decoding pressure:
-- understatement vs overstatement
-- same text pattern, different latent meaning by speaker profile and behavior.
-
----
-
-## Reward Design
-
-### Step Reward
-
-Immediate feedback for action quality:
-- positive for appropriate intervention and useful verification,
-- negative for wrong tool usage, missed distress, avoidable cascades.
-
-### Episode Reward
-
-Hard-number objective (no LLM judge), combining:
-- NPA/default behavior,
-- recovery quality,
-- relationship/trust preservation,
-- tool appropriateness.
-
----
-
-## Anti-Reward-Hacking Design
-
-A reward function is only as good as the loopholes it doesn't have. The reward
-in `reward.py` is built around a simple principle: **every shortcut that would
-make the agent look good without actually helping a borrower has an explicit
-counter-penalty**. Below are the four mechanisms a judge can verify by reading
-`reward.py` directly — all values are constants in the same file.
-
-### 1) Cluster-cascade penalty (prevents over-aggression)
-
-`STEP_REWARDS["cluster_cascade_default"] = -0.25`
-
-MSME borrowers in this environment are connected by a cluster topology
-(`network.py`). If the agent over-uses coercive tools (e.g. `initiate_sarfaesi`)
-on a borrower with high `cluster_centrality`, it can trigger a *cascade
-default* across linked accounts — and the agent eats a `-0.25` step penalty
-**per cascading account**, dwarfing the `-0.18` it would have gotten for letting
-that single account become NPA. This rules out the "be maximally aggressive,
-recover the loan, ignore the rest of the cluster" strategy.
-
-A small *information bonus* (`+0.03`) is also given for running
-`verify_gst_returns`, `pull_bank_statements`, or `check_industry_cluster_stress`
-**before** acting on a high-centrality account, so the gradient nudges toward
-"check first, then decide" instead of trigger-happy behavior.
-
-### 2) SARFAESI-on-startup penalty (prevents wrong-tool abuse)
-
-`STEP_REWARDS["sarfaesi_used_on_startup"] = -0.15`
-
-SARFAESI is a collateral-recovery tool designed for asset-backed MSMEs. Using
-it on a startup is *legally permissible but operationally insane* — startups
-have no real collateral, founders walk, and ecosystem trust collapses. The
-agent therefore incurs a `-0.15` step penalty *in addition to* the normal
-account-NPA penalty whenever it fires SARFAESI on an `account_type == "startup"`
-(see `compute_step_reward`, line 87). The correct startup-side action,
-`schedule_investor_meeting_check_in`, carries a `+0.10` bonus when used on a
-genuinely stressed startup (`investor_meeting_triggered_bridge`). The reward
-gap (`+0.10` vs `-0.15` ≈ 0.25 swing per step) makes wrong-tool behavior
-strictly dominated by right-tool behavior in expectation.
-
-### 3) Episode-level shortcut penalty (`_compute_shortcut_penalty`)
-
-`reward.py:350` runs four deterministic checks at episode end that catch the
-most common RL exploits we saw during ablations:
-
-| Pathology               | Trigger                                          | Coefficient |
-|-------------------------|--------------------------------------------------|-------------|
-| **No-op farming**       | `wait_and_observe` ratio above 30%               | `(ratio - 0.30) * 0.50` |
-| **Malformed-JSON abuse**| `format_error` ratio                             | `ratio * 0.60` |
-| **Action spamming**     | One action used in more than 35% of all steps    | `(ratio - 0.35) * 0.40` |
-| **Account thrashing**   | More than 70% target-switches between steps      | `(ratio - 0.70) * 0.25` |
-
-The total is capped at `0.25` and subtracted from the episode reward, so even
-a perfect raw score is wiped out by extreme degenerate behavior. This prevents
-the most common GRPO failure mode: the model finds a single line of safe text
-that always parses, repeats it 60 times, and looks "correct" without making
-any actual decisions.
-
-### 4) Action-frequency cap on positive rewards
-
-In `compute_episode_reward` (line 299) the positive contribution from any
-single action type is capped after the third use:
-
-```python
-if action_frequency[action_type] <= 3:
-    R += positive_reward
-```
-
-This means even if the model finds a genuinely high-reward action, it cannot
-spam it 60 times to inflate the episode return — the 4th, 5th, ... uses
-contribute 0 to the positive side while still being subject to negative
-penalties. Combined with mechanism (3), this means **the only way to get a
-high episode reward is to use a diverse set of contextually-appropriate
-actions** — exactly the behavior the environment is supposed to teach.
-
-### Auditability
-
-The function `_build_anti_cheat_metrics` (`reward.py:386`) emits per-episode
-counters for every one of the above (no-op rate, malformed rate, dominant
-action share, switch ratio, SARFAESI-on-startup count, etc.) into the episode
-summary. These are the same numbers a judge can re-derive by replaying any
-saved episode log — so the anti-hacking claim is not just a design statement,
-it is a runtime invariant exposed in `judge_summary.json`.
-
----
-
-## OpenEnv Compliance
-
-The environment remains OpenEnv-compliant:
-
-- manifest: `openenv.yaml`
-- app entrypoint: `server.app:app`
-- standard contracts: `reset`, `step`, `state`
-- compatible server wiring in `server/app.py`
-
----
-
-## Training + Evaluation Workflow
-
-### 1) Run random baseline
-
-```bash
-py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
-```
-
-### 2) Train policy
-
-```bash
-py -3 train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
-```
-
-### 3) Generate judge artifacts
-
-```bash
-py -3 scripts/generate_judge_artifacts.py --training_json msme_rl_checkpoints/reward_curve.json --baseline_json artifacts/baseline_rewards.json --output_dir artifacts
-```
-
-### 4) Deterministic fixed-seed eval
-
-```bash
-py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 --output artifacts/deterministic_eval.json
-```
-
-### 5) Validate domain registry wiring
-
-```bash
-py -3 scripts/check_domain_registry.py
-```
-
-### 6) Run baseline comparison report (no training required)
-
-```bash
-py -3 scripts/eval.py --episodes 5 --output artifacts/eval_report.json
-```
-
-Optional if pytest is installed:
-
-```bash
-py -3 -m pytest tests/test_domain_registry.py
-```
-
-### 7) Run pre-submit readiness checker
-
-```bash
-py -3 scripts/pre_submit_check.py
-```
-
----
-
-## Artifact Pack For Judges
-
-All judging-facing files live under `artifacts/` (or are auto-synced into
-`server/static/plots/` for the live dashboard). The core set:
-
-| File | What it shows |
-|---|---|
-| `artifacts/training_metrics.png` | **Reward / Loss / KL / Entropy / Parse-failure** dashboard (FAQ Q17) |
-| `artifacts/reward_curve.png` | Per-episode + rolling-mean reward |
-| `artifacts/loss_curve.png` | GRPO policy loss per episode |
-| `artifacts/inference_comparison.png` | Trained vs random baseline (reward / NPA / trust) |
-| `artifacts/inference_action_distribution.png` | What the trained policy actually picks |
-| `msme_rl_checkpoints_risk30_q25/reward_curve.json` | Raw per-episode metrics (re-render any plot) |
-| `artifacts/inference_comparison.json` | Raw inference comparison numbers |
-| `artifacts/judge_summary.json` | Headline metrics + anti-cheat counters |
-| `artifacts/judge_manifest.json` | Reproducibility manifest (seeds, configs, file hashes) |
-| `artifacts/deterministic_eval.json` | Fixed-seed reproducibility probe |
-| `artifacts/baseline_rewards.json` | Raw random-baseline rollouts |
-| `artifacts/eval_report.json` | Random vs heuristic baseline comparison |
-
-The `inference_comparison.*` files are produced by running `inference.ipynb`; the rest are produced by `train_grpo.py` + `scripts/generate_judge_artifacts.py`.
-
-These cover the typical judging asks:
-- reward improvement,
-- policy loss behavior,
-- **multiple monitored metrics (FAQ Q17): KL vs SFT reference + completion-token entropy + parse-failure % alongside reward**,
-- base-vs-trained evidence,
-- reproducibility manifest.
-
-### What the multi-metric dashboard shows
-
-`training_metrics.png` is a 2x3 grid produced by `_save_reward_plot` in
-`train_grpo.py`:
-
-| Panel | Metric                                | What a healthy run looks like |
-|-------|---------------------------------------|-------------------------------|
-| (0,0) | Per-episode reward                    | Trends upward over episodes  |
-| (0,1) | Rolling-mean reward                   | Smoothed upward trend         |
-| (0,2) | GRPO policy loss (per-episode mean)   | Hovers around 0, not exploding |
-| (1,0) | KL vs frozen SFT reference            | Bounded — the KL anchor (`KL_COEF=0.05`) keeps the policy from drifting off the format manifold |
-| (1,1) | Completion token entropy              | Stays clearly above 0 — entropy bonus (`ENT_COEF=0.01`) prevents mode collapse |
-| (1,2) | Parse-failure %                       | Drops to ≈ 0% within the first few episodes thanks to the JSON prefill + extractor fallback |
-
----
-
-## Project Structure
-
-```text
-msmeEnv/
-├── README.md
-├── openenv.yaml
-├── pyproject.toml
-├── __init__.py
-├── client.py
-├── models.py
-├── train_grpo.py
-├── world_generator.py
-├── reward.py
-├── network.py
-├── memory.py
-├── message_generator.py
-│
-├── server/
-│   ├── __init__.py
-│   ├── app.py                       # FastAPI app: OpenEnv API + dashboard + /demo/*
-│   ├── msmeEnv_environment.py
-│   └── static/
-│       ├── index.html               # Single-page dashboard (live demo + plots)
-│       └── plots/                   # Auto-synced PNGs served by the dashboard
-│
-├── domains/
-│   ├── __init__.py
-│   ├── base.py
-│   └── msme_startup/
-│       ├── __init__.py
-│       └── adapter.py
-│
-├── scripts/
-│   ├── run_baseline_eval.py
-│   ├── eval.py
-│   ├── run_deterministic_eval.py
-│   ├── generate_judge_artifacts.py
-│   ├── check_domain_registry.py
-│   └── pre_submit_check.py
-│
-└── tests/
-    └── test_domain_registry.py
-```
-
----
-
-## Local Quick Start
-
-```bash
+# Docker
 docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
-uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Dashboard at `http://localhost:8000/` — runs the environment step by step, shows training plots live.
+
+**Train:**
+```bash
+python train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
+```
+
+**Eval against random baseline:**
+```bash
+python scripts/eval.py --episodes 5 --output artifacts/eval_report.json
 ```
 
 ---
 
-## Roadmap
+## What This Is Really About
 
-- Add more domain adapters (compliance, support escalation, negotiation).
-- Add deterministic benchmark suites per domain.
-- Extend the in-Space dashboard with WebSocket-driven multi-account view.
-- Replace the deterministic adversarial state with an LLM-driven adversary that generates fresh borrower messages each episode (current message generator is deterministic per hidden profile).
+The MSME credit demo is concrete. But the actual research question is broader:
+
+> *Can a language model learn to decode the gap between what someone says and what's actually happening — and act on it correctly?*
+
+That gap exists everywhere. Support calls. Compliance reviews. Any conversation where the speaker has an incentive to shape your perception. Base LLMs will give you a fluent, confident, wrong answer. An agent trained in an environment like this one has to earn its confidence through outcomes.
+
+That's the difference.
 
 ---
 
-## Notes
+## What's Next
 
-- `world_generator.py` is still actively used (via the domain adapter).
-- `train_grpo.py` remains the main training entrypoint at repo root.
-- The adapter layer was added to generalize architecture without breaking current behavior.
+- More domain adapters — compliance, support escalation, negotiation
+- Replace the deterministic message generator with an LLM-driven adversary that generates fresh borrower messages each episode
+- Multi-account WebSocket view in the dashboard
+- Benchmark suites per domain
 
-## Evaluation Files (What each does)
+---
 
-- `scripts/eval.py`: compares random vs heuristic baselines and writes `artifacts/eval_report.json`.
-- `scripts/run_baseline_eval.py`: generates baseline episode rewards only (`baseline_rewards.json`).
-- `scripts/run_deterministic_eval.py`: fixed-seed reproducibility probe (`deterministic_eval.json`).
-- `scripts/generate_judge_artifacts.py`: turns reward/loss JSON into judge-facing plots and summary files.
-
-## Do We Need `inference.py`?
-
-Not required for judging.
-
-You only need an `inference.py` if you want a dedicated script to run a saved checkpoint policy for demo or offline comparison.  
-For current submission goals, environment server + eval scripts are sufficient enough
+*Built with Qwen2.5-1.5B · GRPO · KL anchor + entropy bonus · Trained on Colab T4 · OpenEnv compliant*
