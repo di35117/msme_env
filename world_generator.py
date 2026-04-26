@@ -176,7 +176,8 @@ def generate_msme_profile(
         "industry": industry,
         "true_financial_health": round(base_health, 3),
         "health_trajectory": trajectory,
-        "strategic_default_propensity": round(strategic_default * 0.8, 3),
+        # Bool strategic_default → {0.0, 0.8}; downstream uses >0.5 as "strategic" flag.
+        "strategic_default_propensity": round(float(strategic_default) * 0.8, 3),
         "crisis_trigger_month": crisis_month,
         "trust_score": round(0.5 + _rng_seed(episode, account_id, "trust") * 0.3, 3),
         "response_to_pressure": round(_rng_seed(episode, account_id, "press"), 3),
