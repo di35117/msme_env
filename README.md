@@ -146,46 +146,36 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
 
 This is a preliminary run — 30 episodes, with each episode capped at 90 steps. The cap was a deliberate resource efficiency choice: enough steps to observe multi-turn behavioral drift and test whether the agent can track state across a dialogue, without the compute cost of full convergence runs. The goal at this stage was proof of concept — does the reward signal improve, does the policy stabilize, and does the agent develop differentiated strategies across domains.
 
+We fine-tuned a **Qwen 1.5B** model with GRPO on this reinforcement learning task.
+
 The answer to all three is yes.
 
 ### Reward Convergence & Loss Stability
 
 | Reward Curve | Training Loss |
 |:---:|:---:|
-| ![reward](./req/reward.jpg) | ![loss](./req/loss.jpg) |
+| ![training reward](./artifacts/training_reward.jpg) | ![policy loss](./artifacts/Policy%20Loss.jpg) |
 | Mean episode reward across 30 training iterations | Policy loss and KL divergence across training |
 
 Reward climbs steadily through the first 15 episodes, with the sharpest gains coming from the agent learning to avoid the highest-penalty actions — particularly `do_nothing` when behavioral signals are deteriorating. Loss stabilizes by mid-training, and KL divergence stays within acceptable bounds throughout, indicating the policy is updating without collapsing.
 
 ### Baseline vs. Trained Distribution
 
-![Base vs Trained](./req/based_vs_trained.jpg)
+![Per-episode: Base vs Trained](./artifacts/per_episode_base_vs_train.jpg)
 
 The untrained baseline clusters around low and negative rewards — it has no domain prior and defaults to generic, low-commitment actions regardless of signals. After training, the distribution shifts meaningfully toward positive reward, with the mass of episodes landing in the `+0.3 → +0.8` range. The long negative tail shrinks but does not disappear — critical misses on heavily biased `loss`-level entities remain the hardest problem.
 
-### Action Distribution & Domain Strategy
+### Training Metrics Dashboard
 
-![Action Distribution](./req/inferenece_action_distribtuon.jpg)
+![Training metrics](./artifacts/training_metric.jpg)
 
-Post-training, the agent's action choices are no longer uniform. Two distinct strategies emerge by domain:
+This panel shows the RL signal and supporting stability metrics over 30 episodes: episode reward and rolling mean, GRPO policy loss, KL divergence vs anchor, completion token entropy, parse-failure rate, NPA rate per episode, average portfolio trust, and `wait_and_observe` usage.
 
-- **MSME**: the agent leans toward `trigger_field_visit` and `request_audited_financials` — tools that bypass linguistic framing and force direct evidence. This compensates for the understatement bias: when an MSME borrower sounds fine, the agent has learned not to take that at face value.
-- **Startup**: the agent escalates more aggressively — higher use of `escalate_to_credit_committee` and `offer_restructuring`. Overstatement bias means the agent treats positive language as a weak signal and falls back on behavioral proxies to drive its decision.
+### Reward Curve (Zoomed)
 
-### MSME vs. Startup Decoding Accuracy
+![Reward curve](./artifacts/reward_curve.png.jpg)
 
-![MSME vs Startup](./req/inference_msme_vs_startup.jpg)
-
-MSME profiles are decoded more accurately than startup profiles at this training scale. Understatement produces a more consistent signal — the mismatch between cautious language and deteriorating behavioral proxies is a learnable pattern. Startup overstatement is harder: the language is often genuinely sophisticated and the behavioral signals are noisier. Further training and more startup-domain episodes will likely close this gap.
-
-### Qualitative Before / After
-
-| Inference Snapshot A | Inference Snapshot B |
-|:---:|:---:|
-| ![Before/After 1](./req/inference_before_after.png.jpg) | ![Before/After 2](./req/inference_before_after_2.jpg) |
-| Agent reasoning pre-training: generic, non-committal, misses behavioral signals | Agent reasoning post-training: names hidden state explicitly, justifies action against observed drift |
-
-The qualitative shift is the most telling result. Before training, the agent produces hedged, non-committal reasoning and frequently chooses `schedule_follow_up` regardless of signal severity. After training, it explicitly names a stress level estimate, cites specific behavioral evidence (latency, document gaps, avoidance), and selects an action proportionate to the inferred risk.
+This view isolates the reward trend with a moving average, making it easier to see the step-change in performance in the second half of training.
 
 ---
 
