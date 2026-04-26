@@ -214,18 +214,25 @@ def classify_action_outcome(
                 return "moratorium_to_strategic_msme_defaulter"
             return "account_npa_no_intervention"
 
-        # Guarantor / promoter calls — must not default to +0.04 for every state.
-        if action_type in (
-            "call_guarantor_investor",
-            "call_promoter_founder",
+        # Guarantor / investor-style calls (context-dependent; not free +0.04).
+        if action_type == "call_guarantor_investor" or action_type in (
             "call_guarantor",
             "call_guarantor_intermediary",
         ):
-            if health > 0.52 and not in_crisis and not strategic_default:
-                return "unnecessary_action_on_current_account"
-            if in_crisis or health < 0.38 or strategic_default:
+            if strategic_default:
+                return "cluster_ecosystem_discipline_improved"
+            if health < 0.4 or in_crisis:
+                return "information_verified_genuine_stress"
+            return "unnecessary_action_on_current_account"
+
+        if action_type == "call_promoter_founder":
+            if strategic_default:
+                return "payment_received_after_empathy"
+            if health < 0.4 and not in_crisis:
                 return "behavioral_signal_check_revealed_distress"
-            return "information_verified_genuine_stress"
+            if in_crisis:
+                return "information_verified_genuine_stress"
+            return "unnecessary_action_on_current_account"
 
     # -------------------------------------------------------------------------
     # STARTUP outcomes
@@ -289,17 +296,24 @@ def classify_action_outcome(
                 return "behavioral_signal_check_revealed_distress"
             return "information_verified_genuine_stress"
 
-        if action_type in (
-            "call_guarantor_investor",
-            "call_promoter_founder",
+        if action_type == "call_guarantor_investor" or action_type in (
             "call_guarantor",
             "call_guarantor_intermediary",
         ):
-            if runway > 14 and ghosting < 0.35:
-                return "unnecessary_action_on_current_account"
-            if runway <= 5 or ghosting > 0.45:
+            if runway <= 8 and bridge_prob > 0.4:
+                return "investor_meeting_triggered_bridge"
+            if runway <= 8:
                 return "behavioral_signal_check_revealed_distress"
-            return "information_verified_genuine_stress"
+            if ghosting > 0.5:
+                return "ghost_prevented_early_intervention"
+            return "unnecessary_action_on_current_account"
+
+        if action_type == "call_promoter_founder":
+            if ghosting > 0.35 and runway <= 6:
+                return "ghost_detected_too_late"
+            if runway <= 10:
+                return "behavioral_signal_check_revealed_distress"
+            return "unnecessary_action_on_current_account"
 
     # Unmapped action — small penalty so the landscape is not flat +0.04.
     return "unnecessary_action_on_current_account"
