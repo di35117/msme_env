@@ -41,18 +41,58 @@ make_llm_policy = _ib.make_llm_policy
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Rank episode_* checkpoints by eval NPA/trust.")
-    p.add_argument("--base", type=str, required=True, help="HF id or path (same arch as checkpoints)")
+    _epilog = """
+Scale / workflow:
+  Quick screen:  --episodes 3 --max-steps 60
+  Stable pick:   --episodes 10 to 15 --max-steps 90  (match train_grpo --max_steps_per_episode when possible)
+  Use the #1 ranked path as --trained in scripts/inference_before_after.py
+
+Jupyter:
+  %cd msmeEnv
+  !python scripts/score_checkpoints.py --base Qwen/Qwen2.5-1.5B-Instruct \\
+      --checkpoint-dir ./msme_rl_run5 --episodes 8 --max-steps 90 --seed 42
+"""
+    p = argparse.ArgumentParser(
+        description="Rank episode_* checkpoints on fixed seeds (lower NPA, higher trust wins).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_epilog,
+    )
+    p.add_argument(
+        "--base",
+        type=str,
+        required=True,
+        help="HF model id or path; same architecture as LoRA checkpoints (for fair comparison).",
+    )
     p.add_argument(
         "--checkpoint-dir",
         type=str,
         required=True,
-        help="Directory containing episode_0002, episode_0010, ... subfolders",
+        help="Training output dir containing episode_0002/, episode_0010/, … subfolders.",
     )
-    p.add_argument("--episodes", type=int, default=5, help="Eval episodes per checkpoint")
-    p.add_argument("--max-steps", type=int, default=60, help="Max env steps per eval episode")
-    p.add_argument("--seed", type=int, default=42, help="Base seed (episode i uses seed+i)")
-    p.add_argument("--glob", type=str, default="episode_*", help="Subdir glob under checkpoint-dir")
+    p.add_argument(
+        "--episodes",
+        type=int,
+        default=5,
+        help="Number of eval rollouts per checkpoint. More => less noise when ranking (try 8–15).",
+    )
+    p.add_argument(
+        "--max-steps",
+        type=int,
+        default=60,
+        help="Env steps per eval episode. Align with training (e.g. 90) for comparable metrics.",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Base RNG seed; episode i uses seed+i (same seeds for every checkpoint).",
+    )
+    p.add_argument(
+        "--glob",
+        type=str,
+        default="episode_*",
+        help="Glob under --checkpoint-dir (default: all episode_* folders).",
+    )
     args = p.parse_args()
 
     ckpt_root = Path(args.checkpoint_dir).resolve()
