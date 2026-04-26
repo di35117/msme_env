@@ -6,6 +6,7 @@ memory.py
 message_generator.py
 models.py
 network.py
+probe_hf.py
 pyproject.toml
 reward.py
 reward_audit.py
