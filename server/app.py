@@ -65,7 +65,9 @@ app = create_app(
 _THIS_DIR = Path(__file__).resolve().parent
 _STATIC_DIR = _THIS_DIR / "static"
 _PLOTS_DIR = _STATIC_DIR / "plots"
+_DATA_DIR = _STATIC_DIR / "data"
 _PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _sync_plots_into_static() -> None:
@@ -85,10 +87,16 @@ def _sync_plots_into_static() -> None:
         "training_metrics.png",
         "reward_curve.png",
         "loss_curve.png",
+        "training_reward_curve.png",
+        "training_loss_curve.png",
+        "per_episode_base_vs_trained.png",
+        "reward_distribution_base_vs_trained.png",
         "inference_comparison.png",
         "inference_action_distribution.png",
         "inference_before_after.png",
         "inference_action_distribution_before_after.png",
+        "inference_msme_vs_startup.png",
+        "inference_action_shift.png",
     ):
         candidates = [
             repo_root / plot_name,
@@ -106,9 +114,55 @@ def _sync_plots_into_static() -> None:
                 break
 
 
+def _sync_dashboard_json_into_static() -> None:
+    """Copy eval + training JSON into static/data/ for the dashboard demo UI."""
+    repo_root = _THIS_DIR.parent
+    dst_inf = _DATA_DIR / "inference_before_after.json"
+    dst_rc = _DATA_DIR / "reward_curve.json"
+    dst_js = _DATA_DIR / "judge_summary.json"
+
+    def _copy_if_newer(src: Path, dst: Path) -> None:
+        if not src.is_file():
+            return
+        try:
+            if not dst.exists() or src.stat().st_mtime > dst.stat().st_mtime:
+                shutil.copy2(src, dst)
+        except Exception:
+            pass
+
+    for name in ("inference_before_after.json",):
+        for src in (repo_root / "artifacts" / name, repo_root / name):
+            _copy_if_newer(src, dst_inf)
+
+    rc_sources: list[Path] = []
+    for src in (repo_root / "artifacts" / "reward_curve.json", repo_root / "reward_curve.json"):
+        if src.is_file():
+            rc_sources.append(src)
+    try:
+        run_dirs = [p for p in repo_root.glob("msme_rl_run*") if p.is_dir()]
+        run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for d in run_dirs:
+            rj = d / "reward_curve.json"
+            if rj.is_file():
+                rc_sources.insert(0, rj)
+                break
+    except Exception:
+        pass
+    for src in rc_sources:
+        _copy_if_newer(src, dst_rc)
+        if dst_rc.exists():
+            break
+
+    for src in (repo_root / "artifacts" / "judge_summary.json",):
+        _copy_if_newer(src, dst_js)
+
+
 _sync_plots_into_static()
+_sync_dashboard_json_into_static()
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+# Hugging Face Spaces often iframes under /web — mirror static here too.
+app.mount("/web/static", StaticFiles(directory=str(_STATIC_DIR)), name="web_static")
 
 
 @app.get("/", include_in_schema=False)
