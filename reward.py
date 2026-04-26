@@ -59,6 +59,45 @@ STEP_REWARDS: Dict[str, float] = {
 DEFAULT_STEP_REWARD = 0.0
 
 
+def _last_payment_days_late(payment_history: Optional[List[str]]) -> int:
+    """Parse trailing payment_history token (e.g. '12_days_late') for rough DPD proxy."""
+    if not payment_history:
+        return 0
+    last = payment_history[-1]
+    if last == "on_time":
+        return 0
+    if isinstance(last, str) and "_days_late" in last:
+        try:
+            return int(last.split("_")[0])
+        except ValueError:
+            return 0
+    return 0
+
+
+def consecutive_action_streak_penalty(
+    prior_episode_history: List[Dict[str, Any]],
+    account_id: int,
+    action_type: str,
+) -> float:
+    """
+    Step penalty for spamming the same (account_id, action_type) consecutively.
+    First two identical steps are free; each further repeat adds increasing cost.
+    Skips wait_and_observe (restraint should not be punished here).
+    """
+    if action_type == "wait_and_observe":
+        return 0.0
+    streak = 1
+    for s in reversed(prior_episode_history):
+        if s.get("account_id") == account_id and s.get("action_type") == action_type:
+            streak += 1
+        else:
+            break
+    if streak <= 2:
+        return 0.0
+    extra = streak - 2
+    return round(min(0.14, extra * 0.038), 4)
+
+
 # ---------------------------------------------------------------------------
 # STEP-LEVEL REWARD COMPUTATION
 # ---------------------------------------------------------------------------
@@ -214,11 +253,17 @@ def classify_action_outcome(
                 return "moratorium_to_strategic_msme_defaulter"
             return "account_npa_no_intervention"
 
-        # Guarantor / investor-style calls (context-dependent; not free +0.04).
+        # Guarantor / investor-style calls — penalize spam on healthy / weak-guarantor MSME.
         if action_type == "call_guarantor_investor" or action_type in (
             "call_guarantor",
             "call_guarantor_intermediary",
         ):
+            gs = float(hidden_profile.get("guarantor_strength", 0.5))
+            late_days = _last_payment_days_late(hidden_profile.get("payment_history"))
+            if gs < 0.38:
+                return "unnecessary_action_on_current_account"
+            if (not strategic_default) and late_days < 7 and health > 0.52:
+                return "unnecessary_action_on_current_account"
             if strategic_default:
                 return "cluster_ecosystem_discipline_improved"
             if health < 0.4 or in_crisis:
@@ -300,6 +345,9 @@ def classify_action_outcome(
             "call_guarantor",
             "call_guarantor_intermediary",
         ):
+            late_days = _last_payment_days_late(hidden_profile.get("payment_history"))
+            if runway > 11 and late_days < 6 and ghosting < 0.38 and bridge_prob < 0.55:
+                return "unnecessary_action_on_current_account"
             if runway <= 8 and bridge_prob > 0.4:
                 return "investor_meeting_triggered_bridge"
             if runway <= 8:
@@ -397,7 +445,7 @@ def compute_episode_reward(
 
     raw_appropriateness = appropriate_count / total_actions
     dominant_ratio = max(action_frequency.values()) / total_actions if action_frequency else 0.0
-    diversity_penalty = max(0.0, (dominant_ratio - 0.50) * 0.60)
+    diversity_penalty = max(0.0, (dominant_ratio - 0.38) * 0.85)
     tool_appropriateness = max(0.0, raw_appropriateness - diversity_penalty)
     contextual_mismatch_rate = hard_mismatch_steps / total_actions
 
@@ -424,7 +472,7 @@ def compute_episode_reward(
         R -= min(0.25, shortcut_penalty)
 
     unique_used = sum(1 for c in action_frequency.values() if c > 0)
-    R += max(0, unique_used - 4) * 0.01
+    R += max(0, unique_used - 5) * 0.018
 
     R *= 5.0
 
@@ -463,7 +511,7 @@ def _compute_shortcut_penalty(episode_history: List[Dict[str, Any]]) -> float:
 
     # 3) Action spamming (same action repeated excessively).
     dominant_ratio = max(action_counter.values()) / total_steps if action_counter else 0.0
-    spam_penalty = max(0.0, dominant_ratio - 0.35) * 0.40
+    spam_penalty = max(0.0, dominant_ratio - 0.25) * 0.55
 
     # 4) Account thrashing: rapid target switching across consecutive steps.
     switches = 0

@@ -361,13 +361,19 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
     MSME_RANGE    = range(1, 21)
     STARTUP_RANGE = range(21, 31)
 
+    def _aid(s):
+        try:
+            return int(s.get("account_id", 0))
+        except (TypeError, ValueError):
+            return 0
+
     def _split_action_pct(runs, account_range):
         from collections import Counter
         c = Counter()
         total = 0
         for r in runs:
             for s in r["trace"]:
-                if s["account_id"] in account_range:
+                if _aid(s) in account_range:
                     c[s["action_type"]] += 1
                     total += 1
         return {a: (c.get(a, 0) / max(1, total)) * 100 for a in VALID_ACTIONS}, total
@@ -377,7 +383,7 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
         for r in runs:
             ep_sum = 0.0
             for s in r["trace"]:
-                if s["account_id"] in account_range:
+                if _aid(s) in account_range:
                     ep_sum += s["step_reward"]
                     counts += 1
             sums.append(ep_sum)
@@ -430,6 +436,8 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
     axes[0].set_ylabel("% of decisions on these accounts")
     axes[0].set_xticks(x); axes[0].set_xticklabels(cats)
     axes[0].grid(axis="y", ls="--", alpha=0.4); axes[0].legend(fontsize=9)
+    _top_c = max(base_c + trnd_c + [0.0])
+    axes[0].set_ylim(0, max(8.0, _top_c * 1.15 + 1e-6))
     for i, (b, t) in enumerate(zip(base_c, trnd_c)):
         axes[0].annotate(f"Δ {t-b:+.1f} pts", xy=(i, max(b, t) + 1.5),
                          ha="center", fontsize=9, fontweight="bold")
@@ -441,6 +449,8 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
     axes[1].set_ylabel("% of decisions on these accounts")
     axes[1].set_xticks(x); axes[1].set_xticklabels(cats)
     axes[1].grid(axis="y", ls="--", alpha=0.4); axes[1].legend(fontsize=9)
+    _top_i = max(base_i + trnd_i + [0.0])
+    axes[1].set_ylim(0, max(8.0, _top_i * 1.15 + 1e-6))
     for i, (b, t) in enumerate(zip(base_i, trnd_i)):
         axes[1].annotate(f"Δ {t-b:+.1f} pts", xy=(i, max(b, t) + 1.5),
                          ha="center", fontsize=9, fontweight="bold")
@@ -453,10 +463,20 @@ def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
     axes[2].set_ylabel("step-reward sum (per episode)")
     axes[2].set_xticks(x); axes[2].set_xticklabels(cats)
     axes[2].grid(axis="y", ls="--", alpha=0.4); axes[2].legend(fontsize=9)
+    # If a class gets no targeted steps, pct bars are 0 — show counts for debugging.
+    fig.text(
+        0.5,
+        0.02,
+        f"Steps in eval traces — MSME: base n={n_msme_b} trained n={n_msme_t} | "
+        f"Startup: base n={n_stp_b} trained n={n_stp_t}",
+        ha="center",
+        fontsize=9,
+        color="#444",
+    )
 
     fig.suptitle("Dual-Strategy Learning  —  MSME (understatement)  vs  Startup (overstatement)",
                  fontsize=14, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.tight_layout(rect=(0, 0.06, 1, 0.93))
     plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved → {out_png}")
