@@ -6,12 +6,58 @@
 
 ## Why This Exists
 
-In high-stakes lending and investment, entities rarely disclose reality directly.
+Imagine a loan officer reviewing a borrower's monthly check-in message. The borrower writes:
 
-- **MSME borrowers** tend to *understate* stress — masking overdue receivables, stretched payments, and declining margins behind cautiously optimistic language.
-- **Startup founders** tend to *overstate* health — inflating ARR, projecting pipeline certainty, and reframing burn as strategic investment.
+> *"Things have been a bit slow this quarter, but we're managing. Expect things to pick up once the season turns."*
 
-Surface text is not enough. A capable analyst reads *between the lines* — cross-referencing what is said with how, when, and how completely it is said. This environment formalizes that skill as a learnable RL problem: given a stream of biased messages and behavioral signals, infer the true hidden state and act on it before it deteriorates further.
+On the surface — nothing alarming. But the loan officer also notices: this reply came after a 12-day silence, the last two meeting requests were declined, and only 40% of the requested documents were submitted. An experienced analyst reads all of this together and flags the account for a field visit. A junior analyst — or a naive model — reads the message, sees no explicit distress, and moves on.
+
+That gap is the problem this environment is built to close.
+
+In high-stakes lending and investment, entities rarely disclose stress directly. They manage perception — sometimes consciously, sometimes not.
+
+- **MSME borrowers** tend to *understate* — masking overdue receivables, stretched supplier payments, and declining margins behind cautiously optimistic language. Admitting stress feels like inviting scrutiny they cannot afford.
+- **Startup founders** tend to *overstate* — inflating ARR, projecting pipeline certainty, and reframing high burn as deliberate, strategic investment. The fundraising culture rewards confidence, even when the numbers don't support it.
+
+The result is that the text alone is routinely misleading. What gives the true state away is the *combination* — what is said, how it is framed, when the reply came, what was left out, and how that pattern has shifted over the last several interactions.
+
+---
+
+## The Problem with Current Approaches
+
+Most NLP-based risk systems treat this as a classification problem: feed the message into a model, predict a risk label, done. This fails in practice for a few reasons.
+
+**First, language is adversarially biased.** The entities being assessed have strong incentives to sound healthy. A model trained on text alone learns to classify confident language as low-risk — which is exactly backwards when the speaker is a founder who has just been told their Series B fell through.
+
+**Second, a single message is not enough context.** Stress rarely announces itself in one message. It leaks through patterns — a gradual increase in response latency, a slow decline in document completion, a shift in sentiment from collaborative to defensive. You need to track across time, not just classify in the moment.
+
+**Third, static models cannot adapt to new intervention outcomes.** A classification model tells you the risk label. It cannot tell you whether to request financials, trigger a field visit, or escalate — and it cannot learn from what happened the last time you tried each of those actions on a similar profile.
+
+---
+
+## Why Reinforcement Learning
+
+RL is a natural fit here because the problem is fundamentally sequential and consequential.
+
+The agent does not just need to *identify* the hidden state — it needs to *act* on that identification, observe what happens, and update its understanding. A field visit either confirms or contradicts the stress estimate. A restructuring offer either stabilizes the entity or reveals that the situation is worse than it appeared. These outcomes are feedback, and RL is the framework that knows how to learn from them.
+
+More specifically, GRPO trains the agent to optimize for the *quality of its reasoning and action selection over a full episode* — not just the next step. This matters because the consequences of misclassifying a `doubtful` entity as `watch` and doing nothing do not show up immediately. They compound. The reward structure is designed to reflect that: heavy penalties for inaction under confirmed stress, episodic bonuses for trajectories that actually reduce risk.
+
+The environment also forces the agent to generalize across two domains with opposite bias directions — MSME understatement and startup overstatement — which prevents it from developing a naive prior like "positive language equals low risk."
+
+---
+
+## A Thought We Stumbled Into
+
+While designing this, something broader surfaced.
+
+The core skill we are training — reading intent and true state from biased, incomplete, socially managed language — is not specific to credit risk. It is the same skill a good doctor uses when a patient downplays pain. It is the same skill a manager uses when a team member says "I'm fine" and means something else entirely. It is what a therapist does, what a negotiator does, what any person who is genuinely good at working with other people does constantly and often unconsciously.
+
+What we are really building is an environment for training **linguistic intent decoding** — the ability to model the gap between what someone says and what is actually true for them. And that raises an interesting question: could this generalize?
+
+Could a model trained in environments like this — across many domains, many speaker types, many forms of bias — develop something closer to genuine social intelligence? Not sentiment analysis, not tone classification, but actual inference about hidden human state from observable language and behavior?
+
+We think this direction is worth pursuing seriously. Language models are already extraordinarily capable at generating human-like text. What they are not yet good at is the inverse problem — reading the human on the other side of the conversation with the same depth that an experienced person would. Environments like this one are, we think, a step toward closing that gap.
 
 ---
 
