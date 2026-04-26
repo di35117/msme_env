@@ -14,7 +14,8 @@ version = "0.1.0"
 description = "Msmeenv environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
-    # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
+    # OpenEnv: use openenv-core only (provides openenv.core.* — server, client, types).
+    # Do not also pin the legacy/meta "openenv" package; it duplicates and can conflict.
     "openenv-core[core]>=0.2.2",
     # Environment-specific dependencies for MSME-RL
     "fastapi>=0.115.0",
@@ -26,7 +27,6 @@ dependencies = [
     "trl>=0.9.6",
     "torch>=2.11.0",
     "accelerate>=1.13.0",
-    "openenv[core]>=0.1.13",
     "python-dotenv>=1.2.2",
 ]
 
@@ -50,11 +50,7 @@ packages = [
 ]
 
 [tool.setuptools.package-dir]
-<<<<<<< HEAD
-"msmeEnv" = "."
-=======
 msmeEnv = "."
->>>>>>> c909320518622b74bffba593657d8b6a08f03931
 "msmeEnv.server" = "server"
 "msmeEnv.domains" = "domains"
 "msmeEnv.domains.msme_startup" = "domains/msme_startup"
