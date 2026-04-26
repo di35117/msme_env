@@ -26,7 +26,7 @@ except Exception as e:
 try:
     from ..models import MSMERLAction, MSMERLObservation
     from .msmeEnv_environment import MSMERLEnvironment
-except (ModuleNotFoundError, ImportError):
+except (ModuleNotFoundError, ImportError):  # <-- Added ImportError here
     from models import MSMERLAction, MSMERLObservation
     from server.msmeEnv_environment import MSMERLEnvironment
 
@@ -36,7 +36,7 @@ app = create_app(
     MSMERLAction,
     MSMERLObservation,
     env_name="msmeEnv",
-    max_concurrent_envs=4,
+    max_concurrent_envs=4,  # Multiple training workers
 )
 
 
