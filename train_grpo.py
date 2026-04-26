@@ -677,7 +677,7 @@ def run_training(
             from models import MSMERLAction
         except (ImportError, ModuleNotFoundError):
             from msmeEnv.models import MSMERLAction
-        env = MSMERLEnvironment()
+        env = MSMERLEnvironment(max_episode_action_budget=max_steps_per_episode)
         use_direct = True
 
     os.makedirs(output_dir, exist_ok=True)
@@ -707,7 +707,7 @@ def run_training(
             from server.msmeEnv_environment import MSMERLEnvironment
         except (ImportError, ModuleNotFoundError):
             from msmeEnv_environment import MSMERLEnvironment
-        env = MSMERLEnvironment()
+        env = MSMERLEnvironment(max_episode_action_budget=max_steps_per_episode)
         use_direct = True
 
     def _heuristic_fallback_action(observation: Dict, reason: str) -> Any:

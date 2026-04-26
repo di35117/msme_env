@@ -80,10 +80,16 @@ class MSMERLEnvironment(Environment):
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
-    def __init__(self):
-        """Initialize the MSME-RL environment."""
+    def __init__(self, max_episode_action_budget: Optional[int] = None):
+        """Initialize the MSME-RL environment.
+
+        max_episode_action_budget: if set, caps the start-month curriculum so the agent
+        can still reach month 36 within that many environment steps (one step per
+        account-action). Defaults to MAX_STEPS_PER_EPISODE when None (no extra cap).
+        """
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._episode_num = 0
+        self._max_episode_action_budget: Optional[int] = max_episode_action_budget
 
         # Current episode state
         self._portfolio: Dict = {}              # full portfolio (hidden + observable)
@@ -121,10 +127,21 @@ class MSMERLEnvironment(Environment):
         self._hidden_profiles = self._portfolio["hidden_profiles"]
         self._observable_states = self._portfolio["observable_states"]
 
-        # FIXED: Horizon Curriculum. Start near crisis (Month 34) and walk back to Month 1
-        # as episodes increment to prevent sparse reward wandering.
-        start_month = max(1, 34 - (self._episode_num // 5) * 4)
-        
+        # FIXED: Horizon curriculum — start near month 34 and walk back. Cap how early we
+        # can start: with a short per-episode action budget, starting before month
+        # (36 - months_reachable) means month 36 is never hit, done never fires, and
+        # training uses only raw step rewards (different, much more negative signal).
+        n_accounts = max(1, len(self._hidden_profiles))
+        budget = (
+            self._max_episode_action_budget
+            if self._max_episode_action_budget is not None
+            else MAX_STEPS_PER_EPISODE
+        )
+        months_available = max(1, budget // n_accounts)
+        min_start_month = max(1, 36 - months_available + 1)
+        curriculum_start = max(1, 34 - (self._episode_num // 5) * 4)
+        start_month = max(min_start_month, curriculum_start)
+
         self._current_month = start_month
         self._episode_history = []
         self._active_cluster_alerts = []
