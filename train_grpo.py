@@ -948,6 +948,11 @@ def run_training(
         heuristic_fallbacks = 0
         # Counter for restraint behavior (fraction of wait_and_observe per episode)
         episode_wait_count = 0
+        # How often the *executed* action is wait, broken down by parse path (diagnostics).
+        # High extractor→wait means second-pass "recovery" is snapping to the default action.
+        first_pass_wait = 0
+        extractor_wait = 0
+        fallback_wait = 0
 
         # JSON prefill: forces the model to continue a JSON object instead of
         # deciding the output format from scratch. Eliminates the "``` + spaces"
@@ -1034,6 +1039,14 @@ def run_training(
                 parse_status = "fallback"
                 action = _heuristic_fallback_action(obs, "(parse fallback heuristic)")
                 completion_for_training = _serialize_action_for_training(action, "(parse fallback heuristic)")
+
+            if getattr(action, "action_type", "") == "wait_and_observe":
+                if parse_status == "first_pass":
+                    first_pass_wait += 1
+                elif parse_status == "extractor":
+                    extractor_wait += 1
+                else:
+                    fallback_wait += 1
 
             if use_direct:
                 obs_obj      = env.step(action)
@@ -1131,15 +1144,21 @@ def run_training(
             f"extractor={extractor_recoveries}/{step_count} ({(extractor_recoveries / max(1, step_count)):.1%}) | "
             f"fallback={heuristic_fallbacks}/{step_count} ({(heuristic_fallbacks / max(1, step_count)):.1%})"
         )
+        print(
+            f"    wait_and_observe by path | first_pass={first_pass_wait} | "
+            f"extractor={extractor_wait} | heuristic={fallback_wait}"
+        )
         if episode <= 2 and (parse_failures / max(1, step_count)) > 0.80:
             print("    WARNING: parse-failure ratio is very high; stop run and tune output control.")
         
         if ep_breakdown:
+            _ctx = ep_breakdown.get("contextual_mismatch_rate", 0.0)
             print(
                 f"    NPA={ep_breakdown['npa_rate']:.1%} | "
                 f"Recovery={ep_breakdown['recovery_rate']:.1%} | "
                 f"Trust={ep_breakdown['relationship_score']:.2f} | "
-                f"ToolFit={ep_breakdown['tool_appropriateness']:.1%}"
+                f"ToolFit={ep_breakdown['tool_appropriateness']:.1%} | "
+                f"CtxMismatch={_ctx:.1%}"
             )
             # Persist the business-outcome curves alongside the RL-machinery curves
             episode_npa_rates.append(float(ep_breakdown.get("npa_rate", 0.0)))

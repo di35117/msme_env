@@ -261,10 +261,20 @@ def compute_episode_reward(
       - NPA rate: fraction of accounts that went NPA (primary signal, 40%)
       - Recovery rate: amount recovered / amount disbursed (30%)
       - Relationship score: mean final trust scores (20%)
-      - Tool appropriateness: right tool per account type (10%)
+      - Tool appropriateness (10% in the shaped mix)
 
-    Returns:
-        Dict with component scores and total R
+    **ToolFit** (``tool_appropriateness``): fraction of steps where
+    ``_is_appropriate_tool(action, account_class)`` is True, then **minus** a
+    *diversity* term that only turns on if **one** action name takes more than
+    50% of steps (action spam).  Normal 90-step policies with ~4 uses of each
+    of many different actions are **not** penalized — unlike the old cap-of-3
+    per action string, which could clip ToolFit to 0% for reasonable coverage.
+
+    **contextual_mismatch_rate**: share of steps with a hard MSME/STARTUP
+    class mismatch (independent of diversity).
+
+    **Early curriculum survival_signal**: ``0.5 - npa_rate`` (smooth gradient
+    from +0.5 at 0% NPA to -0.5 at 100% NPA) instead of a cliff at 0% NPA only.
     """
     total_accounts = len(hidden_profiles)
     if total_accounts == 0:
@@ -292,25 +302,28 @@ def compute_episode_reward(
     ]
     relationship_score = sum(trust_scores) / len(trust_scores) if trust_scores else 0.5
 
-    # FIXED: Prevent Goodharting Tool Appropriateness
-    appropriate_actions = 0
-    action_frequency = {}
-    
+    # Tool: class match rate + dominant-action penalty (not per-action 3-strike)
     total_actions = max(1, len(episode_history))
+    appropriate_count = 0
+    hard_mismatch_steps = 0
+    action_frequency: Dict[str, int] = {}
+
     for step in episode_history:
         action_type  = step.get("action_type", "")
         account_type = step.get("account_type", "")
-        
-        # Track frequency to penalize spamming
-        action_frequency[action_type] = action_frequency.get(action_type, 0) + 1
-        
-        if _is_appropriate_tool(action_type, account_type):
-            if action_frequency[action_type] <= 3: # Cap rewards for the same action
-                appropriate_actions += 1
-            else:
-                appropriate_actions -= 0.5 # Actively penalize spamming the same tool
 
-    tool_appropriateness = max(0.0, appropriate_actions / total_actions)
+        if not _is_appropriate_tool(action_type, account_type):
+            hard_mismatch_steps += 1
+
+        action_frequency[action_type] = action_frequency.get(action_type, 0) + 1
+        if _is_appropriate_tool(action_type, account_type):
+            appropriate_count += 1
+
+    raw_appropriateness = appropriate_count / total_actions
+    dominant_ratio = max(action_frequency.values()) / total_actions if action_frequency else 0.0
+    diversity_penalty = max(0.0, (dominant_ratio - 0.50) * 0.60)
+    tool_appropriateness = max(0.0, raw_appropriateness - diversity_penalty)
+    contextual_mismatch_rate = hard_mismatch_steps / total_actions
 
     # Anti-hacking penalty (independent signal):
     # penalize exploit-like behavior such as no-op farming, repeated invalid/format
@@ -323,32 +336,24 @@ def compute_episode_reward(
     # Curriculum with smooth transition to avoid brittle early binary behavior.
     if episode_num < 30:
         progress = max(0.0, min(1.0, episode_num / 30.0))
-        survival_signal = 1.0 if npa_rate == 0 else (0.1 - npa_rate)
         shaped_signal = (
             0.40 * (1.0 - npa_rate) +
             0.30 * recovery_rate +
             0.20 * relationship_score +
             0.10 * tool_appropriateness
         )
+        # Smooth NPA emphasis in early training (was binary / cliff at 0% NPA).
+        survival_signal = 0.5 - npa_rate
         R = ((1.0 - progress) * survival_signal) + (progress * shaped_signal)
     else:
-        # Phase 2: Complex shaping
         R = (
             0.40 * (1.0 - npa_rate)          +
             0.30 * recovery_rate              +
             0.20 * relationship_score         +
             0.10 * tool_appropriateness
         )
-        # Keep this explicit and bounded so the anti-hack channel is visible
-        # while not completely dominating primary objective metrics.
         R -= min(0.25, shortcut_penalty)
 
-    # Episode-bonus amplification: the raw R lives in [0, 1] but is competing
-    # against ~90 step-rewards summing to roughly -10. Without amplification the
-    # episode bonus is 17x smaller than the step-penalty pile and hitting NPA=0
-    # barely moves the curve. Multiplying by 5 puts the episode bonus in the
-    # same order of magnitude as the step rewards so the policy actually feels
-    # the difference between a 0% NPA episode and a 30% NPA one.
     R *= 5.0
 
     return {
@@ -357,6 +362,9 @@ def compute_episode_reward(
         "recovery_rate":        round(recovery_rate, 4),
         "relationship_score":   round(relationship_score, 4),
         "tool_appropriateness": round(tool_appropriateness, 4),
+        "raw_appropriateness":  round(raw_appropriateness, 4),
+        "tool_diversity_penalty": round(diversity_penalty, 4),
+        "contextual_mismatch_rate": round(contextual_mismatch_rate, 4),
         "shortcut_penalty":     round(shortcut_penalty, 4),
         "anti_cheat_metrics":   anti_cheat_metrics,
         "npa_count":            npa_accounts,
@@ -441,8 +449,12 @@ def _build_anti_cheat_metrics(episode_history: List[Dict[str, Any]]) -> Dict[str
 
 def _is_appropriate_tool(action_type: str, account_type: str) -> bool:
     """
-    Return True if the action is appropriate for the given account type.
-    Core check: SARFAESI on startup = inappropriate; investor meeting on startup = appropriate.
+    Heuristic: is this action *allowed* for this account class?
+
+    - ``UNIVERSAL`` actions (incl. ``wait_and_observe``) are allowed on both MSME and startup.
+    - MSME-only / startup-only tools must match ``account_type``.
+
+    This does **not** judge DPD, urgency, or “best next action” — only class compatibility.
     """
     MSME_ONLY = {
         "send_legal_notice_section13",

@@ -120,6 +120,28 @@ The domain adapter is a swappable layer. Keep all the RL infrastructure, change 
 
 ---
 
+## Reproducibility (training notebook)
+
+**What is the “training run notebook”?**  
+It is the Jupyter file **[`train_colab.ipynb`](train_colab.ipynb)** in this repo — the end-to-end notebook that installs the project, runs **GRPO training** (`train_grpo.py`), and generates judge artifacts. That is what hackathon text means by a *runnable training notebook*.
+
+**Canonical link (use in submissions):** open the notebook on GitHub (anyone can clone or “Open in Colab” from there):
+
+- **Notebook on GitHub:** [https://github.com/di35117/msme_env/blob/main/train_colab.ipynb](https://github.com/di35117/msme_env/blob/main/train_colab.ipynb)
+
+**How to run it**
+
+| Where | What to do |
+|--------|------------|
+| **Local or VM** | `git clone` this repo, `pip install -e .`, open `train_colab.ipynb` in Jupyter, run all cells. |
+| **Google Colab** (optional) | File → *Upload* the notebook, or open the GitHub file and use *Open in Colab* (if your browser has the Colab extension). *Save a copy in Drive* → *Share* → *Anyone with the link* if you need a **separate** “public Colab URL” for a checklist. |
+| **Private Hugging Face Space** | This is your dev runtime — it is **not** a public link. For judges, point them to the **GitHub** link above, or add a **public** Space (or the optional Colab copy) if the hackathon requires a one-click public runtime. |
+
+**Optional extras**
+
+- **Public Colab only if you make one:** `https://colab.research.google.com/...` — replace with your shared Drive copy, or remove this line if you only use GitHub + HF.
+- **Blog / long-form write-up:** draft at [`docs/hf_blog_post.md`](docs/hf_blog_post.md) (Hugging Face blog–style; copy/paste and edit).
+
 ## Run It
 
 ```bash
