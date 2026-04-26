@@ -18,27 +18,16 @@ RUN apt-get update && \
 COPY . /app/env
 WORKDIR /app/env
 
-# Ensure uv is available (for local builds where base image lacks it)
+# Ensure uv is available
 RUN if ! command -v uv >/dev/null 2>&1; then \
         curl -LsSf https://astral.sh/uv/install.sh | sh && \
         mv /root/.local/bin/uv /usr/local/bin/uv && \
         mv /root/.local/bin/uvx /usr/local/bin/uvx; \
     fi
     
-# Install dependencies using uv sync
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-install-project --no-editable; \
-    else \
-        uv sync --no-install-project --no-editable; \
-    fi
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-editable; \
-    else \
-        uv sync --no-editable; \
-    fi
+# Create a virtual environment and install dependencies from your requirements.txt
+RUN uv venv /app/env/.venv
+RUN uv pip install --python /app/env/.venv -r server/requirements.txt
 
 # Final runtime stage
 FROM ${BASE_IMAGE}
@@ -57,10 +46,14 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Set PYTHONPATH so absolute imports work correctly across the project
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
 
-# Health check (matches the OpenEnv /health endpoint specification)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Give the Hugging Face user (ID 1000) ownership of the app directory 
+# to prevent permission denied errors when writing logs or temp files
+RUN chown -R 1000:1000 /app
+USER 1000
 
-# Hugging Face Spaces requires running on port 8000
-# Execute the FastAPI server defined in server/app.py
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
+# Health check updated to point to port 7860
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:7860/health || exit 1
+
+# Execute the FastAPI server defined in server/app.py on port 7860
+CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 7860"]
