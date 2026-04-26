@@ -2,7 +2,6 @@
 
 > *What happens when you build a world small enough that a 1.5B model has to live inside it — and face the consequences of every wrong guess.*
 
-`Machine Learning` `Language` `Credit` `~12 min read`
 
 ---
 
