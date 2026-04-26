@@ -118,16 +118,22 @@ class MSMERLEnvironment(Environment):
     # RESET
     # -------------------------------------------------------------------------
 
-    def reset(self) -> MSMERLObservation:
+    def reset(self, world_episode: Optional[int] = None) -> MSMERLObservation:
         """
         Reset the environment — start a new 36-month portfolio episode.
         Generates a fresh portfolio of 20 MSME + 10 startup accounts.
+
+        world_episode: optional index passed only to portfolio generation (hash-based RNG in
+        world_generator). Use this for eval so different seeds produce different portfolios while
+        keeping the internal _episode_num curriculum counter unchanged. When None, uses
+        self._episode_num after increment (training default).
         """
         self._episode_num += 1
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
-        # Generate new portfolio
-        self._portfolio = self._domain_adapter.generate_world(episode=self._episode_num)
+        # Generate new portfolio (episode id is deterministic hash input, not Python RNG)
+        world_id = int(world_episode) if world_episode is not None else self._episode_num
+        self._portfolio = self._domain_adapter.generate_world(episode=world_id)
         self._hidden_profiles = self._portfolio["hidden_profiles"]
         self._observable_states = self._portfolio["observable_states"]
 
