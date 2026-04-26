@@ -1,6 +1,6 @@
 # 🧠 Linguistic Decoding RL
 
-**A reinforcement learning environment where an LLM agent learns to decode hidden financial stress from biased language and behavioral signals — then selects the correct intervention.**
+**A reinforcement learning environment where an LLM agent learns to decode hidden financial stress from biased natural language and behavioral signals — then selects the correct intervention action.**
 
 ---
 
@@ -8,10 +8,10 @@
 
 In high-stakes lending and investment, entities rarely disclose reality directly.
 
-- **MSME borrowers** tend to *understate* financial stress — masking overdue receivables, stretched payments, and declining margins behind optimistic framing.
-- **Startup founders** tend to *overstate* health — inflating ARR, projecting pipeline certainty, and rationalizing burn as "strategic investment."
+- **MSME borrowers** tend to *understate* stress — masking overdue receivables, stretched payments, and declining margins behind cautiously optimistic language.
+- **Startup founders** tend to *overstate* health — inflating ARR, projecting pipeline certainty, and reframing burn as strategic investment.
 
-Surface text is insufficient. This environment trains an agent to read *between the lines* — integrating linguistic signals, behavioral proxies, and temporal patterns to decode the true hidden state and take the right action before it's too late.
+Surface text is not enough. A capable analyst reads *between the lines* — cross-referencing what is said with how, when, and how completely it is said. This environment formalizes that skill as a learnable RL problem: given a stream of biased messages and behavioral signals, infer the true hidden state and act on it before it deteriorates further.
 
 ---
 
@@ -19,14 +19,14 @@ Surface text is insufficient. This environment trains an agent to read *between 
 
 At each step, the agent:
 
-1. Receives a **natural language message** from the entity (biased by speaker disposition)
-2. Observes **behavioral proxies** — response latency, document completion rate, meeting cancellations, escalation avoidance
-3. Infers the **hidden stress level**: `healthy → watch → substandard → doubtful → loss`
+1. Receives a **natural language message** from the entity — written with speaker bias baked in
+2. Observes **behavioral proxies** alongside the text: response latency, document completion rate, meeting cancellations, escalation avoidance score
+3. Forms an estimate of the **hidden stress level**: `healthy → watch → substandard → doubtful → loss`
 4. Selects a **policy action** from the intervention menu
-5. Receives a **step reward** (action appropriateness) and **episode reward** (trajectory outcome)
-6. Updates behavior across episodes via GRPO fine-tuning
+5. Receives a **step reward** for action appropriateness and an **inference bonus** for correctly identifying the hidden state
+6. Accumulates experience across episodes and refines its policy via GRPO
 
-The environment deliberately withholds ground truth. The agent must *earn* its estimate.
+The ground truth is never revealed during the episode. The agent must earn its estimate entirely from what it can observe.
 
 ---
 
@@ -39,13 +39,15 @@ The environment deliberately withholds ground truth. The agent must *earn* its e
 | **MSME** | Understatement | retail, manufacturing, agri-processing, logistics, hospitality |
 | **Startup** | Overstatement | fintech, edtech, healthtech, SaaS, consumer |
 
+The two domains are trained together intentionally. MSME and startup entities have *opposite* bias directions — a single-domain agent develops the wrong prior. Training across both forces the agent to condition on domain context before interpreting linguistic tone.
+
 ### Stress Levels (Hidden State)
 
 ```
 healthy → watch → substandard → doubtful → loss
 ```
 
-Each level has calibrated financial snapshots, behavioral profiles, and message templates — with speaker bias injected to obscure the true state.
+Each level maps to calibrated financial snapshots, behavioral profiles, and message templates. Speaker bias is injected at generation time to obscure the true level — the gap between what is said and what is real is the core inference challenge.
 
 ### Intervention Actions
 
@@ -61,10 +63,10 @@ Each level has calibrated financial snapshots, behavioral profiles, and message 
 
 ### Reward Structure
 
-- **Step reward** — action appropriateness given true stress level (`-1.0 → +1.0`)
-- **Inference bonus** — `+0.4` for correctly naming the hidden stress level; partial credit for adjacent levels
-- **Critical miss penalty** — `-0.5` for `do_nothing` or `schedule_follow_up` on `doubtful`/`loss` entities
-- **Episode reward** — trajectory bonus for net stress reduction + final state penalty
+- **Step reward** — scored against an action-appropriateness matrix per true stress level (`-1.0 → +1.0`)
+- **Inference bonus** — `+0.4` for correctly naming the hidden stress level; partial credit for adjacent-level estimates
+- **Critical miss penalty** — `-0.5` for choosing `do_nothing` or `schedule_follow_up` on a `doubtful` or `loss` entity
+- **Episode reward** — trajectory bonus for net stress reduction across steps, plus a terminal penalty if the entity ends the episode in a worse state than it started
 
 ---
 
@@ -96,36 +98,48 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
 
 ## Training Results
 
+This is a preliminary run — 30 episodes, with each episode capped at 90 steps. The cap was a deliberate resource efficiency choice: enough steps to observe multi-turn behavioral drift and test whether the agent can track state across a dialogue, without the compute cost of full convergence runs. The goal at this stage was proof of concept — does the reward signal improve, does the policy stabilize, and does the agent develop differentiated strategies across domains.
+
+The answer to all three is yes.
+
 ### Reward Convergence & Loss Stability
 
 | Reward Curve | Training Loss |
 |:---:|:---:|
-| ![reward curve](./req/reward%20curve.jpg) | ![loss](./req/loss.jpg) |
-| Mean episode reward across 50 training iterations | Policy loss and KL divergence stabilization |
+| ![reward](./req/reward.jpg) | ![loss](./req/loss.jpg) |
+| Mean episode reward across 30 training iterations | Policy loss and KL divergence across training |
+
+Reward climbs steadily through the first 15 episodes, with the sharpest gains coming from the agent learning to avoid the highest-penalty actions — particularly `do_nothing` when behavioral signals are deteriorating. Loss stabilizes by mid-training, and KL divergence stays within acceptable bounds throughout, indicating the policy is updating without collapsing.
 
 ### Baseline vs. Trained Distribution
 
-![Base vs Trained](./req/curve.jpg)
+![Base vs Trained](./req/based_vs_trained.jpg)
 
-The reward distribution shift shows a consistent move away from high-penalty actions (`do_nothing` on stressed entities) toward high-validity interventions. The trained agent avoids the two most damaging failure modes: **inaction under loss** and **over-escalation under healthy**.
+The untrained baseline clusters around low and negative rewards — it has no domain prior and defaults to generic, low-commitment actions regardless of signals. After training, the distribution shifts meaningfully toward positive reward, with the mass of episodes landing in the `+0.3 → +0.8` range. The long negative tail shrinks but does not disappear — critical misses on heavily biased `loss`-level entities remain the hardest problem.
 
 ### Action Distribution & Domain Strategy
 
 ![Action Distribution](./req/inferenece_action_distribtuon.jpg)
 
-Post-training, the agent develops distinct strategies per domain:
-- **MSME**: heavier use of `trigger_field_visit` and `request_audited_financials` — compensating for understatement bias
-- **Startup**: heavier use of `escalate_to_credit_committee` and `offer_restructuring` — countering overstatement bias
+Post-training, the agent's action choices are no longer uniform. Two distinct strategies emerge by domain:
 
-### MSME vs. Startup Performance
+- **MSME**: the agent leans toward `trigger_field_visit` and `request_audited_financials` — tools that bypass linguistic framing and force direct evidence. This compensates for the understatement bias: when an MSME borrower sounds fine, the agent has learned not to take that at face value.
+- **Startup**: the agent escalates more aggressively — higher use of `escalate_to_credit_committee` and `offer_restructuring`. Overstatement bias means the agent treats positive language as a weak signal and falls back on behavioral proxies to drive its decision.
+
+### MSME vs. Startup Decoding Accuracy
 
 ![MSME vs Startup](./req/inference_msme_vs_startup.jpg)
 
-Decoding accuracy is higher on MSME profiles. Startup overstatement creates harder inference problems — the agent learns to weight behavioral signals more heavily when linguistic tone is unusually positive.
+MSME profiles are decoded more accurately than startup profiles at this training scale. Understatement produces a more consistent signal — the mismatch between cautious language and deteriorating behavioral proxies is a learnable pattern. Startup overstatement is harder: the language is often genuinely sophisticated and the behavioral signals are noisier. Further training and more startup-domain episodes will likely close this gap.
 
 ### Qualitative Before / After
 
-![Inference before/after](./req/inference_before_after.jpg)
+| Inference Snapshot A | Inference Snapshot B |
+|:---:|:---:|
+| ![Before/After 1](./req/inference_before_after.png.jpg) | ![Before/After 2](./req/inference_before_after_2.jpg) |
+| Agent reasoning pre-training: generic, non-committal, misses behavioral signals | Agent reasoning post-training: names hidden state explicitly, justifies action against observed drift |
+
+The qualitative shift is the most telling result. Before training, the agent produces hedged, non-committal reasoning and frequently chooses `schedule_follow_up` regardless of signal severity. After training, it explicitly names a stress level estimate, cites specific behavioral evidence (latency, document gaps, avoidance), and selects an action proportionate to the inferred risk.
 
 ---
 
@@ -137,8 +151,8 @@ Decoding accuracy is higher on MSME profiles. Startup overstatement creates hard
 # Establish baseline performance (untrained policy)
 py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
 
-# Train with GRPO over 50 episodes
-py -3 train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
+# Train with GRPO — 30 episodes, 90 steps per episode
+py -3 train_grpo.py --episodes 30 --max_steps 90 --output_dir msme_rl_checkpoints
 ```
 
 ### 2. Generate Judge Artifacts
@@ -196,13 +210,15 @@ msmeEnv/
 
 ## Key Design Decisions
 
-**Why biased generation?** Real-world language is never neutral. Entities in financial distress have strong incentives to manage perception. Training on clean, unbiased text produces agents that fail on real data.
+**Why biased generation?** Real-world language is never neutral. Entities in financial distress have strong incentives to manage perception. Training on clean, unbiased text produces agents that perform well in evaluation and fail in deployment.
 
-**Why behavioral proxies?** Language alone is gameable. Response latency, document gaps, and meeting avoidance are harder to fake and often leak the true state even when the text is polished.
+**Why behavioral proxies alongside text?** Language alone is gameable. Response latency, document gaps, and meeting avoidance are harder to fake — and often leak the true state precisely when the text is most polished. The agent is rewarded for integrating both channels, not just parsing the message.
 
-**Why GRPO over PPO?** GRPO avoids the value network overhead and is better suited to sparse, delayed reward signals — which dominate in this environment where the episode reward matters more than any single step.
+**Why GRPO over PPO?** GRPO avoids the value network overhead and handles sparse, delayed reward signals better — which matters here because the episode reward often carries more signal than any individual step reward.
 
-**Why two domains?** MSME and startup entities have *opposite* bias directions. A single-domain agent learns the wrong prior. Training across both forces the agent to condition on domain before interpreting tone.
+**Why cap episodes at 90 steps?** Full convergence runs are expensive and unnecessary for a preliminary proof. 90 steps is enough to test multi-turn tracking, behavioral drift detection, and domain-conditioned strategy without burning compute on marginal gains at this stage.
+
+**What comes next?** Longer episodes, more startup-domain training data, and a harder bias injection regime where speaker bias is adversarially calibrated to maximally confuse the agent's current policy.
 
 ---
 
