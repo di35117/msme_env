@@ -83,6 +83,15 @@ def compute_step_reward(
     """
     base_reward = STEP_REWARDS.get(outcome, DEFAULT_STEP_REWARD)
 
+    # Restraint bonus: wait_and_observe on healthy accounts is the dominant
+    # correct action (~70% of accounts in any month don't need intervention).
+    # Without this bonus, every "active" action has expected value < 0 and the
+    # policy never learns that doing nothing is +EV when the account is fine.
+    # The bonus is small (+0.02) so it cannot beat a true positive outcome
+    # (+0.04 to +0.10), only the zero-baseline of pointless action.
+    if action_type == "wait_and_observe":
+        base_reward += 0.02
+
     # Type-specific amplification
     if account_type == "startup" and action_type == "initiate_sarfaesi":
         # SARFAESI on startup: extra penalty (wrong tool, destroys ecosystem trust)
@@ -333,6 +342,14 @@ def compute_episode_reward(
         # Keep this explicit and bounded so the anti-hack channel is visible
         # while not completely dominating primary objective metrics.
         R -= min(0.25, shortcut_penalty)
+
+    # Episode-bonus amplification: the raw R lives in [0, 1] but is competing
+    # against ~90 step-rewards summing to roughly -10. Without amplification the
+    # episode bonus is 17x smaller than the step-penalty pile and hitting NPA=0
+    # barely moves the curve. Multiplying by 5 puts the episode bonus in the
+    # same order of magnitude as the step rewards so the policy actually feels
+    # the difference between a 0% NPA episode and a 30% NPA one.
+    R *= 5.0
 
     return {
         "total":                round(R, 4),
