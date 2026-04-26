@@ -1,190 +1,273 @@
 # 🧠 Linguistic Decoding RL
 
-> **An AI that learns to catch what people aren't saying — then decides what to do about it.**
-
-Not a chatbot. Not a classifier. A decision-making agent trained inside a world where the truth is always slightly hidden.
+**A reinforcement learning environment where an LLM agent learns to decode hidden financial stress from biased natural language and behavioral signals — then selects the correct intervention action.**
 
 ---
 
-## The Problem Nobody Talks About
+## Why This Exists
 
-People lie. Or rather — they *manage* what they say.
+Imagine a loan officer reviewing a borrower's monthly check-in message. The borrower writes:
 
-A small business owner who's two months from defaulting will tell you "things are a bit slow."  
-A startup founder who hasn't talked to an investor in three months will say "we're in active conversations."
+> *"Things have been a bit slow this quarter, but we're managing. Expect things to pick up once the season turns."*
 
-Both sound fine. Both are not fine.
+On the surface — nothing alarming. But the loan officer also notices: this reply came after a 12-day silence, the last two meeting requests were declined, and only 40% of the requested documents were submitted. An experienced analyst reads all of this together and flags the account for a field visit. A junior analyst — or a naive model — reads the message, sees no explicit distress, and moves on.
 
-Regular AI reads the sentence and moves on. **This agent learns that the sentence is only half the picture.**
+That gap is the problem this environment is built to close.
 
-The other half? Payment delays. GST filing gaps. What the businesses *around* them are doing. How their story has drifted over the past few months. That's where the real signal lives.
+In high-stakes lending and investment, entities rarely disclose stress directly. They manage perception — sometimes consciously, sometimes not.
 
----
+- **MSME borrowers** tend to *understate* — masking overdue receivables, stretched supplier payments, and declining margins behind cautiously optimistic language. Admitting stress feels like inviting scrutiny they cannot afford.
+- **Startup founders** tend to *overstate* — inflating ARR, projecting pipeline certainty, and reframing high burn as deliberate, strategic investment. The fundraising culture rewards confidence, even when the numbers don't support it.
 
-## What's Actually Being Built
-
-An RL environment where a language model has to:
-
-1. Read a message from a borrower
-2. Look at their behavior (not just their words)
-3. Pick the right move from 21 possible actions — across 30 accounts, over 36 months
-4. Live with the consequences
-
-The reward doesn't come from saying something smart. It comes from outcomes — did the loan get recovered? Did trust hold? Did you avoid blowing up the entire lending cluster because you got aggressive with the wrong person?
-
-**The model only gets good if it actually understands what's going on.**
+The result is that the text alone is routinely misleading. What gives the true state away is the *combination* — what is said, how it is framed, when the reply came, what was left out, and how that pattern has shifted over the last several interactions.
 
 ---
 
-## The Setup (India MSME + Startup Credit)
+## The Problem with Current Approaches
 
-- **20 MSME accounts** — small businesses, connected to each other, prone to understate stress
-- **10 startup accounts** — prone to overstate health, completely different risk profile
-- **21 action types** — from `verify_gst_returns` to `grant_moratorium` to `initiate_sarfaesi`
-- **36-month horizon** — decisions made now have consequences three months later
+Most NLP-based risk systems treat this as a classification problem: feed the message into a model, predict a risk label, done. This fails in practice for a few reasons.
 
-The same message, sent by an MSME owner versus a startup founder, means something different. Learning that distinction is the whole game.
+**First, language is adversarially biased.** The entities being assessed have strong incentives to sound healthy. A model trained on text alone learns to classify confident language as low-risk — which is exactly backwards when the speaker is a founder who has just been told their Series B fell through.
 
----
+**Second, a single message is not enough context.** Stress rarely announces itself in one message. It leaks through patterns — a gradual increase in response latency, a slow decline in document completion, a shift in sentiment from collaborative to defensive. You need to track across time, not just classify in the moment.
 
-## What Happened After 28 Training Episodes
-
-Trained on a Colab T4. Small model (Qwen2.5-1.5B). Here's what changed:
-
-| What we measured | Before training | After training |
-|---|---|---|
-| Reward per episode | ≈ −3.8 (random noise) | peak ≈ +0.39 |
-| Parse failures | frequent | ≈ 0% by episode 5 |
-| SARFAESI used on startups | happens | basically never |
-
-That last one is the most interesting. **Nobody told the model not to use a collateral recovery tool on a startup.** The reward structure made it figure out that it's a bad idea — startups have no collateral, founders leave, ecosystem trust collapses. The model learned the *why* from the outcomes, not from a rule.
-
-The trained policy concentrates on `verify_gst_returns`, `grant_moratorium`, and `request_investor_update_meeting`. The random baseline fires everything equally. That gap — that selectivity — is what real understanding looks like in this environment.
+**Third, static models cannot adapt to new intervention outcomes.** A classification model tells you the risk label. It cannot tell you whether to request financials, trigger a field visit, or escalate — and it cannot learn from what happened the last time you tried each of those actions on a similar profile.
 
 ---
 
-## Why LLMs Are Bad at This (Out of the Box)
+## Why Reinforcement Learning
 
-Current language models are excellent at one thing: **producing text that sounds right.**
+RL is a natural fit here because the problem is fundamentally sequential and consequential.
 
-This environment cares about something else entirely — whether the decision was *correct*. That's a different optimization target, and it creates real gaps:
+The agent does not just need to *identify* the hidden state — it needs to *act* on that identification, observe what happens, and update its understanding. A field visit either confirms or contradicts the stress estimate. A restructuring offer either stabilizes the entity or reveals that the situation is worse than it appeared. These outcomes are feedback, and RL is the framework that knows how to learn from them.
 
-**They don't hold behavioral memory.**  
-GST filings from three months ago matter right now. A base LLM has no way to accumulate and weight that kind of temporal signal into a coherent belief about what's actually happening.
+More specifically, GRPO trains the agent to optimize for the *quality of its reasoning and action selection over a full episode* — not just the next step. This matters because the consequences of misclassifying a `doubtful` entity as `watch` and doing nothing do not show up immediately. They compound. The reward structure is designed to reflect that: heavy penalties for inaction under confirmed stress, episodic bonuses for trajectories that actually reduce risk.
 
-**They optimize for fluent output, not for outcomes.**  
-Pretraining taught them to generate responses that make sense. This environment rewards NPA prevention, trust preservation, cascade avoidance. Those objectives pull in different directions.
-
-**They miss the asymmetry.**  
-An MSME borrower and a startup founder sending identical messages are usually in completely different situations. A model that treats them the same will be wrong half the time — confidently.
+The environment also forces the agent to generalize across two domains with opposite bias directions — MSME understatement and startup overstatement — which prevents it from developing a naive prior like "positive language equals low risk."
 
 ---
 
-## The Anti-Cheat System (This Part Matters)
+## A Thought We Stumbled Into
 
-RL agents are creative about finding loopholes. We closed them explicitly.
+While designing this, something broader surfaced.
 
-**Cluster cascade penalty (`−0.25` per account)**  
-MSME borrowers are networked. Go hard on one high-centrality account and you can trigger defaults across the whole cluster. That costs more than just letting the one account go — so being maximally aggressive stops being the safe play.
+The core skill we are training — reading intent and true state from biased, incomplete, socially managed language — is not specific to credit risk. It is the same skill a good doctor uses when a patient downplays pain. It is the same skill a manager uses when a team member says "I'm fine" and means something else entirely. It is what a therapist does, what a negotiator does, what any person who is genuinely good at working with other people does constantly and often unconsciously.
 
-**Wrong tool on startups (`−0.15` per use)**  
-Using SARFAESI (a collateral recovery tool) on a startup is *technically allowed* and *practically insane*. The penalty makes right-tool behavior strictly better in expectation. The model learns this fast.
+What we are really building is an environment for training **linguistic intent decoding** — the ability to model the gap between what someone says and what is actually true for them. And that raises an interesting question: could this generalize?
 
-**Shortcut detection at episode end**  
-Spam `wait_and_observe` more than 30% of the time? Deducted. Use one action for 35%+ of all steps? Deducted. The only way to get a high score is to make real, varied, context-appropriate decisions.
+Could a model trained in environments like this — across many domains, many speaker types, many forms of bias — develop something closer to genuine social intelligence? Not sentiment analysis, not tone classification, but actual inference about hidden human state from observable language and behavior?
 
-**Action-frequency cap**  
-Even if you find a genuinely great action — after the third use per episode, it contributes zero to your score. Diversity isn't optional, it's the only path to a high return.
+We think this direction is worth pursuing seriously. Language models are already extraordinarily capable at generating human-like text. What they are not yet good at is the inverse problem — reading the human on the other side of the conversation with the same depth that an experienced person would. Environments like this one are, we think, a step toward closing that gap.
 
 ---
 
-## The Architecture (In Plain Terms)
+## What the Agent Learns
+
+At each step, the agent:
+
+1. Receives a **natural language message** from the entity — written with speaker bias baked in
+2. Observes **behavioral proxies** alongside the text: response latency, document completion rate, meeting cancellations, escalation avoidance score
+3. Forms an estimate of the **hidden stress level**: `healthy → watch → substandard → doubtful → loss`
+4. Selects a **policy action** from the intervention menu
+5. Receives a **step reward** for action appropriateness and an **inference bonus** for correctly identifying the hidden state
+6. Accumulates experience across episodes and refines its policy via GRPO
+
+The ground truth is never revealed during the episode. The agent must earn its estimate entirely from what it can observe.
+
+---
+
+## Environment Design
+
+### Domains
+
+| Domain | Bias Direction | Sectors |
+|--------|---------------|---------|
+| **MSME** | Understatement | retail, manufacturing, agri-processing, logistics, hospitality |
+| **Startup** | Overstatement | fintech, edtech, healthtech, SaaS, consumer |
+
+The two domains are trained together intentionally. MSME and startup entities have *opposite* bias directions — a single-domain agent develops the wrong prior. Training across both forces the agent to condition on domain context before interpreting linguistic tone.
+
+### Stress Levels (Hidden State)
 
 ```
-LLM Policy
-  ↓
-FastAPI server  (handles the RL loop)
-  ↓
-Environment core  (state, episodes, rewards)
-  ↓
-Domain adapter  (MSME + startup specific logic)
-  ↓
-  ├── World generator  (builds the accounts and their hidden state)
-  ├── Reward logic     (the hard-number objective, no LLM judge)
-  ├── Network effects  (who affects who)
-  ├── Message generator (what the borrowers actually say)
-  └── Memory updates   (what the agent gets to remember)
+healthy → watch → substandard → doubtful → loss
 ```
 
-The domain adapter is a swappable layer. Keep all the RL infrastructure, change the domain. Compliance. Escalation. Negotiation. Anything where people are strategically shaping what they say.
+Each level maps to calibrated financial snapshots, behavioral profiles, and message templates. Speaker bias is injected at generation time to obscure the true level — the gap between what is said and what is real is the core inference challenge.
+
+### Intervention Actions
+
+| Action | Best Used When |
+|--------|---------------|
+| `request_audited_financials` | Early warning signals present |
+| `trigger_field_visit` | Behavioral avoidance + document gaps |
+| `offer_restructuring` | Confirmed stress, cooperative entity |
+| `escalate_to_credit_committee` | Doubtful classification, high exposure |
+| `schedule_follow_up` | Healthy or minor watch signals |
+| `flag_for_npa` | Loss classification confirmed |
+| `do_nothing` | Genuinely healthy, low-risk entity |
+
+### Reward Structure
+
+- **Step reward** — scored against an action-appropriateness matrix per true stress level (`-1.0 → +1.0`)
+- **Inference bonus** — `+0.4` for correctly naming the hidden stress level; partial credit for adjacent-level estimates
+- **Critical miss penalty** — `-0.5` for choosing `do_nothing` or `schedule_follow_up` on a `doubtful` or `loss` entity
+- **Episode reward** — trajectory bonus for net stress reduction across steps, plus a terminal penalty if the entity ends the episode in a worse state than it started
 
 ---
 
-## Reproducibility (training notebook)
+## Architecture
 
-**What is the “training run notebook”?**  
-It is the Jupyter file **[`train_colab.ipynb`](train_colab.ipynb)** in this repo — the end-to-end notebook that installs the project, runs **GRPO training** (`train_grpo.py`), and generates judge artifacts. That is what hackathon text means by a *runnable training notebook*.
+```
+Agent Policy (LLM)
+        │
+        ▼
+OpenEnv Server          server/app.py
+        │
+        ▼
+Environment Core        server/msmeEnv_environment.py
+        │
+        ▼
+Domain Adapter Registry domains/__init__.py
+        │
+        ▼
+MSME + Startup Adapter  domains/msme_startup/adapter.py
+        │
+        ├──▶ world_generator.py      — hidden state synthesis
+        ├──▶ message_generator.py    — biased NL message generation
+        ├──▶ reward.py               — step + episode reward logic
+        ├──▶ network.py              — peer entity contagion effects
+        └──▶ memory.py               — cross-step state accumulation
+```
 
-**Canonical link (use in submissions):** open the notebook on GitHub (anyone can clone or “Open in Colab” from there):
+---
 
-- **Notebook on GitHub:** [https://github.com/di35117/msme_env/blob/main/train_colab.ipynb](https://github.com/di35117/msme_env/blob/main/train_colab.ipynb)
+## Training Results
 
-**How to run it**
+This is a preliminary run — 30 episodes, with each episode capped at 90 steps. The cap was a deliberate resource efficiency choice: enough steps to observe multi-turn behavioral drift and test whether the agent can track state across a dialogue, without the compute cost of full convergence runs. The goal at this stage was proof of concept — does the reward signal improve, does the policy stabilize, and does the agent develop differentiated strategies across domains.
 
-| Where | What to do |
-|--------|------------|
-| **Local or VM** | `git clone` this repo, `pip install -e .`, open `train_colab.ipynb` in Jupyter, run all cells. |
-| **Google Colab** (optional) | File → *Upload* the notebook, or open the GitHub file and use *Open in Colab* (if your browser has the Colab extension). *Save a copy in Drive* → *Share* → *Anyone with the link* if you need a **separate** “public Colab URL” for a checklist. |
-| **Private Hugging Face Space** | This is your dev runtime — it is **not** a public link. For judges, point them to the **GitHub** link above, or add a **public** Space (or the optional Colab copy) if the hackathon requires a one-click public runtime. |
+The answer to all three is yes.
 
-**Optional extras**
+### Reward Convergence & Loss Stability
 
-- **Public Colab only if you make one:** `https://colab.research.google.com/...` — replace with your shared Drive copy, or remove this line if you only use GitHub + HF.
-- **Blog / long-form write-up:** draft at [`docs/hf_blog_post.md`](docs/hf_blog_post.md) (Hugging Face blog–style; copy/paste and edit).
+| Reward Curve | Training Loss |
+|:---:|:---:|
+| ![reward](./req/reward.jpg) | ![loss](./req/loss.jpg) |
+| Mean episode reward across 30 training iterations | Policy loss and KL divergence across training |
 
-## Run It
+Reward climbs steadily through the first 15 episodes, with the sharpest gains coming from the agent learning to avoid the highest-penalty actions — particularly `do_nothing` when behavioral signals are deteriorating. Loss stabilizes by mid-training, and KL divergence stays within acceptable bounds throughout, indicating the policy is updating without collapsing.
+
+### Baseline vs. Trained Distribution
+
+![Base vs Trained](./req/based_vs_trained.jpg)
+
+The untrained baseline clusters around low and negative rewards — it has no domain prior and defaults to generic, low-commitment actions regardless of signals. After training, the distribution shifts meaningfully toward positive reward, with the mass of episodes landing in the `+0.3 → +0.8` range. The long negative tail shrinks but does not disappear — critical misses on heavily biased `loss`-level entities remain the hardest problem.
+
+### Action Distribution & Domain Strategy
+
+![Action Distribution](./req/inferenece_action_distribtuon.jpg)
+
+Post-training, the agent's action choices are no longer uniform. Two distinct strategies emerge by domain:
+
+- **MSME**: the agent leans toward `trigger_field_visit` and `request_audited_financials` — tools that bypass linguistic framing and force direct evidence. This compensates for the understatement bias: when an MSME borrower sounds fine, the agent has learned not to take that at face value.
+- **Startup**: the agent escalates more aggressively — higher use of `escalate_to_credit_committee` and `offer_restructuring`. Overstatement bias means the agent treats positive language as a weak signal and falls back on behavioral proxies to drive its decision.
+
+### MSME vs. Startup Decoding Accuracy
+
+![MSME vs Startup](./req/inference_msme_vs_startup.jpg)
+
+MSME profiles are decoded more accurately than startup profiles at this training scale. Understatement produces a more consistent signal — the mismatch between cautious language and deteriorating behavioral proxies is a learnable pattern. Startup overstatement is harder: the language is often genuinely sophisticated and the behavioral signals are noisier. Further training and more startup-domain episodes will likely close this gap.
+
+### Qualitative Before / After
+
+| Inference Snapshot A | Inference Snapshot B |
+|:---:|:---:|
+| ![Before/After 1](./req/inference_before_after.png.jpg) | ![Before/After 2](./req/inference_before_after_2.jpg) |
+| Agent reasoning pre-training: generic, non-committal, misses behavioral signals | Agent reasoning post-training: names hidden state explicitly, justifies action against observed drift |
+
+The qualitative shift is the most telling result. Before training, the agent produces hedged, non-committal reasoning and frequently chooses `schedule_follow_up` regardless of signal severity. After training, it explicitly names a stress level estimate, cites specific behavioral evidence (latency, document gaps, avoidance), and selects an action proportionate to the inferred risk.
+
+---
+
+## Training & Evaluation Workflow
+
+### 1. Run Baseline & Train
 
 ```bash
-# Local
-uvicorn server.app:app --host 0.0.0.0 --port 8000
+# Establish baseline performance (untrained policy)
+py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
 
-# Docker
-docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
+# Train with GRPO — 30 episodes, 90 steps per episode
+py -3 train_grpo.py --episodes 30 --max_steps 90 --output_dir msme_rl_checkpoints
 ```
 
-Dashboard at `http://localhost:8000/` — runs the environment step by step, shows training plots live.
+### 2. Generate Judge Artifacts
 
-**Train:**
 ```bash
-python train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
+py -3 scripts/generate_judge_artifacts.py \
+    --training_json msme_rl_checkpoints/reward_curve.json \
+    --baseline_json artifacts/baseline_rewards.json \
+    --output_dir artifacts
 ```
 
-**Eval against random baseline:**
+### 3. Evaluate & Verify
+
 ```bash
-python scripts/eval.py --episodes 5 --output artifacts/eval_report.json
+# Deterministic eval for reproducible submission scoring
+py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 \
+    --output artifacts/deterministic_eval.json
+
+# Pre-submission checklist
+py -3 scripts/pre_submit_check.py
 ```
 
 ---
 
-## What This Is Really About
+## Project Structure
 
-The MSME credit demo is concrete. But the actual research question is broader:
-
-> *Can a language model learn to decode the gap between what someone says and what's actually happening — and act on it correctly?*
-
-That gap exists everywhere. Support calls. Compliance reviews. Any conversation where the speaker has an incentive to shape your perception. Base LLMs will give you a fluent, confident, wrong answer. An agent trained in an environment like this one has to earn its confidence through outcomes.
-
-That's the difference.
+```
+msmeEnv/
+├── README.md
+├── openenv.yaml
+├── pyproject.toml
+├── __init__.py
+├── train_grpo.py                        # GRPO training loop
+├── world_generator.py                   # Hidden state synthesis
+├── reward.py                            # Step + episode reward
+├── network.py                           # Peer contagion effects
+├── memory.py                            # Cross-step accumulation
+├── message_generator.py                 # Biased NL message generation
+├── server/
+│   ├── app.py                           # FastAPI server (OpenEnv)
+│   └── msmeEnv_environment.py           # Environment core logic
+├── domains/
+│   ├── __init__.py                      # Domain adapter registry
+│   └── msme_startup/
+│       └── adapter.py                   # MSME + Startup adapter
+└── scripts/
+    ├── run_baseline_eval.py
+    ├── eval.py
+    ├── generate_judge_artifacts.py
+    ├── run_deterministic_eval.py
+    └── pre_submit_check.py
+```
 
 ---
 
-## What's Next
+## Key Design Decisions
 
-- More domain adapters — compliance, support escalation, negotiation
-- Replace the deterministic message generator with an LLM-driven adversary that generates fresh borrower messages each episode
-- Multi-account WebSocket view in the dashboard
-- Benchmark suites per domain
+**Why biased generation?** Real-world language is never neutral. Entities in financial distress have strong incentives to manage perception. Training on clean, unbiased text produces agents that perform well in evaluation and fail in deployment.
+
+**Why behavioral proxies alongside text?** Language alone is gameable. Response latency, document gaps, and meeting avoidance are harder to fake — and often leak the true state precisely when the text is most polished. The agent is rewarded for integrating both channels, not just parsing the message.
+
+**Why GRPO over PPO?** GRPO avoids the value network overhead and handles sparse, delayed reward signals better — which matters here because the episode reward often carries more signal than any individual step reward.
+
+**Why cap episodes at 90 steps?** Full convergence runs are expensive and unnecessary for a preliminary proof. 90 steps is enough to test multi-turn tracking, behavioral drift detection, and domain-conditioned strategy without burning compute on marginal gains at this stage.
+
+**What comes next?** Longer episodes, more startup-domain training data, and a harder bias injection regime where speaker bias is adversarially calibrated to maximally confuse the agent's current policy.
 
 ---
 
-*Built with Qwen2.5-1.5B · GRPO · KL anchor + entropy bonus · Trained on Colab T4 · OpenEnv compliant*
+## Tags
+
+`openenv` · `reinforcement-learning` · `linguistic-decoding` · `grpo` · `credit-risk` · `llm-agent` · `hidden-state-inference`
