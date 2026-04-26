@@ -1,0 +1,31 @@
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main] # This triggers the action whenever you push to main
+  workflow_dispatch: # Allows you to trigger it manually from GitHub
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub code
+        uses: actions/checkout@v4
+
+      - name: Delete Unwanted Binary Files
+        # This deletes the folders and files on the GitHub server 
+        # BEFORE they get uploaded to Hugging Face.
+        run: |
+          rm -rf artifacts/
+          rm -rf req/
+          find . -type f \( -name "*.docx" -o -name "*.pdf" -o -name "*.jpg" -o -name "*.png" \) -delete
+
+      - name: Install Hugging Face CLI
+        run: pip install -U "huggingface_hub[cli]"
+
+      - name: Upload clean code to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        # This uploads the remaining files directly to your space
+        run: |
+          huggingface-cli upload di35117/msmefinal . . --repo-type=space
