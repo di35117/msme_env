@@ -1744,7 +1744,7 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
 
     # KL ceiling: skip update when policy has already drifted far from the reference.
     # Prevents aggressive steps when KL is spiking (classic GRPO instability).
-    KL_CEILING = 0.008
+    KL_CEILING = 0.018
     if avg_kl > KL_CEILING:
         optimizer.zero_grad()
         print(
