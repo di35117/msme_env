@@ -1,0 +1,202 @@
+# Replace this file with your full raw console log if you need every tqdm line.
+# Below: transcript you pasted (msme_rl_run5, 30 episodes), condensed but complete for episode outcomes.
+
+Unsloth not available, falling back to HF Transformers
+
+(config.json, tokenizer, vocab, merges, tokenizer.json, model.safetensors download progress omitted)
+
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights: 100%|██████████████████████| 338/338 [00:00<00:00, 1101.05it/s]
+
+generation_config.json: 100%|██████████████████| 242/242 [00:00<00:00, 1.95MB/s]
+
+Loaded model with HF Transformers
+
+Starting SFT Warm Start...
+
+SFT dataset: 73 examples
+
+Adding EOS to train dataset: 100%|████| 73/73 [00:00<00:00, 17227.49 examples/s]
+
+Tokenizing train dataset: 100%|████████| 73/73 [00:00<00:00, 1688.84 examples/s]
+
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None, 'pad_token_id': 151643}.
+
+(SFT trainer logs: loss/entropy/epoch steps through epoch 3)
+
+{'train_runtime': '24.53', 'train_samples_per_second': '8.929', 'train_steps_per_second': '2.324', 'train_loss': '0.5924', 'entropy': '0.1837', 'num_tokens': '5.131e+04', 'mean_token_accuracy': '0.9527', 'epoch': '3'}
+
+100%|███████████████████████████████████████████| 57/57 [00:24<00:00, 2.32it/s]
+
+SFT Warm Start complete.
+
+Building reference policy for KL anchor...
+
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights: 100%|██████████████████████| 338/338 [00:00<00:00, 3306.33it/s]
+
+Reference model loaded on cuda:0 (torch.bfloat16).
+
+Connected to MSME-RL environment server via HTTP
+
+--- Episode 1/30 ---
+
+(Could not reset remote env / fallback to direct env — debug samples omitted)
+
+✓ Episode 1 done | steps=90 | reward=1.2327 | time=82s
+
+(GRPO updates episode 1)
+
+--- Episode 2/30 ---
+
+✓ Episode 2 done | steps=90 | reward=2.0152 | time=72s
+
+Checkpoint saved: ./msme_rl_run5/episode_0002
+
+--- Episode 3/30 ---
+
+✓ Episode 3 done | steps=90 | reward=1.2047 | time=93s
+
+--- Episode 4/30 ---
+
+✓ Episode 4 done | steps=90 | reward=0.1948 | time=89s
+
+Checkpoint saved: ./msme_rl_run5/episode_0004
+
+--- Episode 5/30 ---
+
+✓ Episode 5 done | steps=90 | reward=0.9947 | time=93s
+
+--- Episode 6/30 ---
+
+✓ Episode 6 done | steps=90 | reward=1.5758 | time=95s
+
+Checkpoint saved: ./msme_rl_run5/episode_0006
+
+--- Episode 7/30 ---
+
+✓ Episode 7 done | steps=90 | reward=1.4091 | time=84s
+
+--- Episode 8/30 ---
+
+✓ Episode 8 done | steps=90 | reward=1.2284 | time=102s
+
+Checkpoint saved: ./msme_rl_run5/episode_0008
+
+--- Episode 9/30 ---
+
+✓ Episode 9 done | steps=90 | reward=1.0590 | time=94s
+
+Checkpoint saved: ./msme_rl_run5/episode_0010
+
+--- Episode 11/30 ---
+
+✓ Episode 11 done | steps=90 | reward=1.5509 | time=81s
+
+--- Episode 12/30 ---
+
+✓ Episode 12 done | steps=90 | reward=0.9028 | time=93s
+
+Checkpoint saved: ./msme_rl_run5/episode_0012
+
+--- Episode 13/30 ---
+
+✓ Episode 13 done | steps=90 | reward=1.7594 | time=100s
+
+--- Episode 14/30 ---
+
+✓ Episode 14 done | steps=90 | reward=0.8956 | time=75s
+
+Checkpoint saved: ./msme_rl_run5/episode_0014
+
+--- Episode 15/30 ---
+
+✓ Episode 15 done | steps=90 | reward=2.1882 | time=106s
+
+--- Episode 16/30 ---
+
+✓ Episode 16 done | steps=90 | reward=0.7800 | time=87s
+
+Checkpoint saved: ./msme_rl_run5/episode_0016
+
+--- Episode 17/30 ---
+
+✓ Episode 17 done | steps=90 | reward=1.8285 | time=85s
+
+--- Episode 18/30 ---
+
+✓ Episode 18 done | steps=90 | reward=0.8715 | time=94s
+
+Checkpoint saved: ./msme_rl_run5/episode_0018
+
+--- Episode 19/30 ---
+
+✓ Episode 19 done | steps=90 | reward=2.4818 | time=81s
+
+--- Episode 20/30 ---
+
+✓ Episode 20 done | steps=90 | reward=2.4408 | time=90s
+
+Checkpoint saved: ./msme_rl_run5/episode_0020
+
+--- Episode 21/30 ---
+
+✓ Episode 21 done | steps=90 | reward=1.3888 | time=92s
+
+--- Episode 22/30 ---
+
+✓ Episode 22 done | steps=90 | reward=1.6503 | time=92s
+
+Checkpoint saved: ./msme_rl_run5/episode_0022
+
+--- Episode 23/30 ---
+
+✓ Episode 23 done | steps=90 | reward=2.7959 | time=87s
+
+--- Episode 24/30 ---
+
+✓ Episode 24 done | steps=90 | reward=2.3025 | time=90s
+
+Checkpoint saved: ./msme_rl_run5/episode_0024
+
+--- Episode 25/30 ---
+
+✓ Episode 25 done | steps=90 | reward=2.4088 | time=83s
+
+--- Episode 26/30 ---
+
+✓ Episode 26 done | steps=90 | reward=2.8049 | time=89s
+
+Checkpoint saved: ./msme_rl_run5/episode_0026
+
+--- Episode 27/30 ---
+
+✓ Episode 27 done | steps=90 | reward=2.8696 | time=93s
+
+--- Episode 28/30 ---
+
+✓ Episode 28 done | steps=90 | reward=1.8800 | time=86s
+
+Checkpoint saved: ./msme_rl_run5/episode_0028
+
+--- Episode 29/30 ---
+
+✓ Episode 29 done | steps=90 | reward=1.7155 | time=100s
+
+--- Episode 30/30 ---
+
+✓ Episode 30 done | steps=90 | reward=2.1975 | time=95s
+
+Checkpoint saved: ./msme_rl_run5/episode_0030
+
+============================================================
+
+TRAINING COMPLETE
+
+Final episode reward: 2.1975
+
+Reward curve: ./msme_rl_run5/reward_curve.png
+
+============================================================
