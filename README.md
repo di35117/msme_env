@@ -146,6 +146,8 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
 
 This is a preliminary run — 30 episodes, with each episode capped at 90 steps. The cap was a deliberate resource efficiency choice: enough steps to observe multi-turn behavioral drift and test whether the agent can track state across a dialogue, without the compute cost of full convergence runs. The goal at this stage was proof of concept — does the reward signal improve, does the policy stabilize, and does the agent develop differentiated strategies across domains.
 
+We fine-tuned a **Qwen 1.5B** model with GRPO on this reinforcement learning task.
+
 The answer to all three is yes.
 
 ### Reward Convergence & Loss Stability
