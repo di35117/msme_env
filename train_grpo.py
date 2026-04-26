@@ -1206,6 +1206,14 @@ def run_training(
                     episode_kls.append(episode_kl_sum / update_count)
                     episode_entropies.append(episode_entropy_sum / update_count)
 
+            # Step the LR scheduler once per episode (decays lr from 2e-6 → ~0.6e-6
+            # over 30 episodes) so updates get gentler as the policy commits.
+            if hasattr(model, "_grpo_scheduler"):
+                try:
+                    model._grpo_scheduler.step()
+                except Exception:
+                    pass
+
             all_steps = []
 
         # Checkpoint + plot
@@ -1285,13 +1293,21 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
         # LR history:
         #   1e-5 → policy collapsed (KL → 1.0, parse → 90% in 5 ep)
         #   3e-6 → policy froze   (KL ≈ 0.01 over 5 ep, no learning)
-        #   5e-6 → middle ground: enough signal to move, not enough to diverge
+        #   5e-6 → middle ground BUT entropy climbed and reward stayed flat
+        #   2e-6 + LinearLR decay (1.0 → 0.3 over 30 ep) → smoother updates,
+        #          policy commits late instead of oscillating
         model._grpo_optimizer = torch.optim.AdamW(
             trainable,
-            lr=5e-6,
+            lr=2e-6,
             weight_decay=0.01,
         )
-        print("    GRPO optimizer initialized (lr=5e-6)")
+        model._grpo_scheduler = torch.optim.lr_scheduler.LinearLR(
+            model._grpo_optimizer,
+            start_factor=1.0,
+            end_factor=0.3,
+            total_iters=30,
+        )
+        print("    GRPO optimizer initialized (lr=2e-6 with LinearLR decay → 0.6e-6)")
 
     optimizer = model._grpo_optimizer
 
@@ -1312,9 +1328,13 @@ def _grpo_update_step(model: Any, tokenizer: Any, batch: List[Dict]) -> None:
     #   0.05 → too weak, policy drifted to KL=1.0 and degenerated
     #   0.20 → too strong, policy frozen at KL=0.01 (no learning)
     #   0.10 → loose enough for movement, strong enough to keep the format
-    # ENT_COEF kept at 0.05 — entropy held above 0.7 in last run, healthy.
+    # ENT_COEF history:
+    #   0.05 → entropy CLIMBED 0.74 → 0.84 over 10 ep, reward stayed flat at -10
+    #          (exploration bonus was fighting the policy gradient)
+    #   0.01 → small enough to let entropy fall as policy commits, big enough
+    #          to prevent collapse to a single action
     KL_COEF  = 0.10
-    ENT_COEF = 0.05
+    ENT_COEF = 0.01
 
     total_kl_value      = 0.0
     total_entropy_value = 0.0
