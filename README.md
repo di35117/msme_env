@@ -1,284 +1,211 @@
----
-title: Linguistic Decoding RL Environment
-emoji: "🧠"
-colorFrom: blue
-colorTo: purple
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
-  - reinforcement-learning
-  - linguistic-decoding
----
+# 🧠 Linguistic Decoding RL
 
-# Linguistic Decoding RL
-
-A reinforcement learning environment where an LLM learns to decode hidden state from language and behavior over time, then select the right intervention action.
-
-This project is built around a concrete **MSME + startup credit demo** (India), while using a modular architecture that can generalize to other linguistic-decoding domains.
+**A reinforcement learning environment where an LLM agent learns to decode hidden financial stress from biased language and behavioral signals — then selects the correct intervention.**
 
 ---
 
 ## Why This Exists
 
-In high-stakes communication, people rarely state reality directly.
+In high-stakes lending and investment, entities rarely disclose reality directly.
 
-- MSME borrowers may **understate** stress.
-- Startup founders may **overstate** health.
-- Surface text can be misleading without behavioral and temporal context.
+- **MSME borrowers** tend to *understate* financial stress — masking overdue receivables, stretched payments, and declining margins behind optimistic framing.
+- **Startup founders** tend to *overstate* health — inflating ARR, projecting pipeline certainty, and rationalizing burn as "strategic investment."
 
-So this is not sentiment classification and not a chatbot.
-It is a sequential decision problem with hidden state and delayed outcomes.
+Surface text is insufficient. This environment trains an agent to read *between the lines* — integrating linguistic signals, behavioral proxies, and temporal patterns to decode the true hidden state and take the right action before it's too late.
 
 ---
 
-## What The Agent Learns
+## What the Agent Learns
 
 At each step, the agent:
 
-1. observes messages + behavioral proxies,
-2. chooses a policy action,
-3. receives step reward and delayed episode reward,
-4. updates behavior over episodes.
+1. Receives a **natural language message** from the entity (biased by speaker disposition)
+2. Observes **behavioral proxies** — response latency, document completion rate, meeting cancellations, escalation avoidance
+3. Infers the **hidden stress level**: `healthy → watch → substandard → doubtful → loss`
+4. Selects a **policy action** from the intervention menu
+5. Receives a **step reward** (action appropriateness) and **episode reward** (trajectory outcome)
+6. Updates behavior across episodes via GRPO fine-tuning
 
-The learning target is robust linguistic decoding under partial observability.
+The environment deliberately withholds ground truth. The agent must *earn* its estimate.
+
+---
+
+## Environment Design
+
+### Domains
+
+| Domain | Bias Direction | Sectors |
+|--------|---------------|---------|
+| **MSME** | Understatement | retail, manufacturing, agri-processing, logistics, hospitality |
+| **Startup** | Overstatement | fintech, edtech, healthtech, SaaS, consumer |
+
+### Stress Levels (Hidden State)
+
+```
+healthy → watch → substandard → doubtful → loss
+```
+
+Each level has calibrated financial snapshots, behavioral profiles, and message templates — with speaker bias injected to obscure the true state.
+
+### Intervention Actions
+
+| Action | Best Used When |
+|--------|---------------|
+| `request_audited_financials` | Early warning signals present |
+| `trigger_field_visit` | Behavioral avoidance + document gaps |
+| `offer_restructuring` | Confirmed stress, cooperative entity |
+| `escalate_to_credit_committee` | Doubtful classification, high exposure |
+| `schedule_follow_up` | Healthy or minor watch signals |
+| `flag_for_npa` | Loss classification confirmed |
+| `do_nothing` | Genuinely healthy, low-risk entity |
+
+### Reward Structure
+
+- **Step reward** — action appropriateness given true stress level (`-1.0 → +1.0`)
+- **Inference bonus** — `+0.4` for correctly naming the hidden stress level; partial credit for adjacent levels
+- **Critical miss penalty** — `-0.5` for `do_nothing` or `schedule_follow_up` on `doubtful`/`loss` entities
+- **Episode reward** — trajectory bonus for net stress reduction + final state penalty
 
 ---
 
 ## Architecture
 
-### High-Level Flow
-
-```text
+```
 Agent Policy (LLM)
-        |
-        v
-OpenEnv Server (`server/app.py`)
-        |
-        v
-Environment Core (`server/msmeEnv_environment.py`)
-        |
-        v
-Domain Adapter Registry (`domains/__init__.py`)
-        |
-        v
-MSME+Startup Adapter (`domains/msme_startup/adapter.py`)
-        |
-        +--> World generation (`world_generator.py`)
-        +--> Reward logic (`reward.py`)
-        +--> Network effects (`network.py`)
-        +--> Message generation (`message_generator.py`)
-        +--> Memory updates (`memory.py`)
+        │
+        ▼
+OpenEnv Server          server/app.py
+        │
+        ▼
+Environment Core        server/msmeEnv_environment.py
+        │
+        ▼
+Domain Adapter Registry domains/__init__.py
+        │
+        ▼
+MSME + Startup Adapter  domains/msme_startup/adapter.py
+        │
+        ├──▶ world_generator.py      — hidden state synthesis
+        ├──▶ message_generator.py    — biased NL message generation
+        ├──▶ reward.py               — step + episode reward logic
+        ├──▶ network.py              — peer entity contagion effects
+        └──▶ memory.py               — cross-step state accumulation
 ```
 
-### Design Principle
+---
 
-- **Core environment** handles episode lifecycle, state orchestration, OpenEnv contracts.
-- **Domain adapter** encapsulates domain-specific semantics.
-- **Domain logic modules** keep reward/world/network/message behavior explicit and testable.
+## Training Results
 
-This lets you keep a strong concrete demo while preserving extensibility.
+### Reward Convergence & Loss Stability
+
+| Reward Curve | Training Loss |
+|:---:|:---:|
+| ![reward curve](./req/reward%20curve.jpg) | ![loss](./req/loss.jpg) |
+| Mean episode reward across 50 training iterations | Policy loss and KL divergence stabilization |
+
+### Baseline vs. Trained Distribution
+
+![Base vs Trained](./req/curve.jpg)
+
+The reward distribution shift shows a consistent move away from high-penalty actions (`do_nothing` on stressed entities) toward high-validity interventions. The trained agent avoids the two most damaging failure modes: **inaction under loss** and **over-escalation under healthy**.
+
+### Action Distribution & Domain Strategy
+
+![Action Distribution](./req/inferenece_action_distribtuon.jpg)
+
+Post-training, the agent develops distinct strategies per domain:
+- **MSME**: heavier use of `trigger_field_visit` and `request_audited_financials` — compensating for understatement bias
+- **Startup**: heavier use of `escalate_to_credit_committee` and `offer_restructuring` — countering overstatement bias
+
+### MSME vs. Startup Performance
+
+![MSME vs Startup](./req/inference_msme_vs_startup.jpg)
+
+Decoding accuracy is higher on MSME profiles. Startup overstatement creates harder inference problems — the agent learns to weight behavioral signals more heavily when linguistic tone is unusually positive.
+
+### Qualitative Before / After
+
+![Inference before/after](./req/inference_before_after.jpg)
 
 ---
 
-## Domain Design (Current Demo)
+## Training & Evaluation Workflow
 
-Current active domain: `msme_startup`
-
-- 20 MSME accounts + 10 startup accounts
-- 36-month horizon
-- 21+ action types
-- two interacting topologies:
-  - MSME cluster contagion
-  - startup ecosystem propagation
-
-This creates asymmetric decoding pressure:
-- understatement vs overstatement
-- same text pattern, different latent meaning by speaker profile and behavior.
-
----
-
-## Reward Design
-
-### Step Reward
-
-Immediate feedback for action quality:
-- positive for appropriate intervention and useful verification,
-- negative for wrong tool usage, missed distress, avoidable cascades.
-
-### Episode Reward
-
-Hard-number objective (no LLM judge), combining:
-- NPA/default behavior,
-- recovery quality,
-- relationship/trust preservation,
-- tool appropriateness.
-
----
-
-## OpenEnv Compliance
-
-The environment remains OpenEnv-compliant:
-
-- manifest: `openenv.yaml`
-- app entrypoint: `server.app:app`
-- standard contracts: `reset`, `step`, `state`
-- compatible server wiring in `server/app.py`
-
----
-
-## Training + Evaluation Workflow
-
-### 1) Run random baseline
+### 1. Run Baseline & Train
 
 ```bash
+# Establish baseline performance (untrained policy)
 py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rewards.json
-```
 
-### 2) Train policy
-
-```bash
+# Train with GRPO over 50 episodes
 py -3 train_grpo.py --episodes 50 --output_dir msme_rl_checkpoints
 ```
 
-### 3) Generate judge artifacts
+### 2. Generate Judge Artifacts
 
 ```bash
-py -3 scripts/generate_judge_artifacts.py --training_json msme_rl_checkpoints/reward_curve.json --baseline_json artifacts/baseline_rewards.json --output_dir artifacts
+py -3 scripts/generate_judge_artifacts.py \
+    --training_json msme_rl_checkpoints/reward_curve.json \
+    --baseline_json artifacts/baseline_rewards.json \
+    --output_dir artifacts
 ```
 
-### 4) Deterministic fixed-seed eval
+### 3. Evaluate & Verify
 
 ```bash
-py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 --output artifacts/deterministic_eval.json
-```
+# Deterministic eval for reproducible submission scoring
+py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 \
+    --output artifacts/deterministic_eval.json
 
-### 5) Validate domain registry wiring
-
-```bash
-py -3 scripts/check_domain_registry.py
-```
-
-### 6) Run baseline comparison report (no training required)
-
-```bash
-py -3 scripts/eval.py --episodes 5 --output artifacts/eval_report.json
-```
-
-Optional if pytest is installed:
-
-```bash
-py -3 -m pytest tests/test_domain_registry.py
-```
-
-### 7) Run pre-submit readiness checker
-
-```bash
+# Pre-submission checklist
 py -3 scripts/pre_submit_check.py
 ```
 
 ---
 
-## Artifact Pack For Judges
-
-Commit these generated files:
-
-- `artifacts/training_reward_curve.png`
-- `artifacts/training_loss_curve.png`
-- `artifacts/reward_distribution_base_vs_trained.png`
-- `artifacts/per_episode_base_vs_trained.png`
-- `artifacts/judge_summary.json`
-- `artifacts/judge_manifest.json`
-- `artifacts/deterministic_eval.json`
-- `artifacts/baseline_rewards.json`
-- `artifacts/eval_report.json`
-
-These cover the typical judging asks:
-- reward improvement,
-- policy loss behavior,
-- base-vs-trained evidence,
-- reproducibility manifest.
-
----
-
 ## Project Structure
 
-```text
+```
 msmeEnv/
 ├── README.md
 ├── openenv.yaml
 ├── pyproject.toml
 ├── __init__.py
-├── client.py
-├── models.py
-├── train_grpo.py
-├── world_generator.py
-├── reward.py
-├── network.py
-├── memory.py
-├── message_generator.py
-│
+├── train_grpo.py                        # GRPO training loop
+├── world_generator.py                   # Hidden state synthesis
+├── reward.py                            # Step + episode reward
+├── network.py                           # Peer contagion effects
+├── memory.py                            # Cross-step accumulation
+├── message_generator.py                 # Biased NL message generation
 ├── server/
-│   ├── __init__.py
-│   ├── app.py
-│   └── msmeEnv_environment.py
-│
+│   ├── app.py                           # FastAPI server (OpenEnv)
+│   └── msmeEnv_environment.py           # Environment core logic
 ├── domains/
-│   ├── __init__.py
-│   ├── base.py
+│   ├── __init__.py                      # Domain adapter registry
 │   └── msme_startup/
-│       ├── __init__.py
-│       └── adapter.py
-│
-├── scripts/
-│   ├── run_baseline_eval.py
-│   ├── eval.py
-│   ├── run_deterministic_eval.py
-│   ├── generate_judge_artifacts.py
-│   ├── check_domain_registry.py
-│   └── pre_submit_check.py
-│
-└── tests/
-    └── test_domain_registry.py
+│       └── adapter.py                   # MSME + Startup adapter
+└── scripts/
+    ├── run_baseline_eval.py
+    ├── eval.py
+    ├── generate_judge_artifacts.py
+    ├── run_deterministic_eval.py
+    └── pre_submit_check.py
 ```
 
 ---
 
-## Local Quick Start
+## Key Design Decisions
 
-```bash
-docker build -t linguistic-decoding-env:latest -f server/Dockerfile .
-uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-```
+**Why biased generation?** Real-world language is never neutral. Entities in financial distress have strong incentives to manage perception. Training on clean, unbiased text produces agents that fail on real data.
 
----
+**Why behavioral proxies?** Language alone is gameable. Response latency, document gaps, and meeting avoidance are harder to fake and often leak the true state even when the text is polished.
 
-## Roadmap
+**Why GRPO over PPO?** GRPO avoids the value network overhead and is better suited to sparse, delayed reward signals — which dominate in this environment where the episode reward matters more than any single step.
 
-- Add more domain adapters (compliance, support escalation, negotiation).
-- Add deterministic benchmark suites per domain.
-- Add side-by-side policy comparison dashboards in Space UI.
+**Why two domains?** MSME and startup entities have *opposite* bias directions. A single-domain agent learns the wrong prior. Training across both forces the agent to condition on domain before interpreting tone.
 
 ---
 
-## Notes
+## Tags
 
-- `world_generator.py` is still actively used (via the domain adapter).
-- `train_grpo.py` remains the main training entrypoint at repo root.
-- The adapter layer was added to generalize architecture without breaking current behavior.
-
-## Evaluation Files (What each does)
-
-- `scripts/eval.py`: compares random vs heuristic baselines and writes `artifacts/eval_report.json`.
-- `scripts/run_baseline_eval.py`: generates baseline episode rewards only (`baseline_rewards.json`).
-- `scripts/run_deterministic_eval.py`: fixed-seed reproducibility probe (`deterministic_eval.json`).
-- `scripts/generate_judge_artifacts.py`: turns reward/loss JSON into judge-facing plots and summary files.
-
-## Do We Need `inference.py`?
-
-Not required for judging.
-
-You only need an `inference.py` if you want a dedicated script to run a saved checkpoint policy for demo or offline comparison.  
-For current submission goals, environment server + eval scripts are sufficient.
+`openenv` · `reinforcement-learning` · `linguistic-decoding` · `grpo` · `credit-risk` · `llm-agent` · `hidden-state-inference`
