@@ -687,6 +687,10 @@ def run_training(
     episode_kls:        List[float] = []
     episode_entropies:  List[float] = []
     parse_failure_rates: List[float] = []
+    # Business-outcome curves (the "did the agent learn the *task*" signal)
+    episode_npa_rates:    List[float] = []   # 0.0–1.0; lower is better
+    episode_trust_scores: List[float] = []   # 0.0–1.0; higher is better
+    episode_wait_ratios:  List[float] = []   # fraction of steps using wait_and_observe
     all_steps: List[Dict] = []
 
     def _resolve_maybe_await(value):
@@ -942,6 +946,8 @@ def run_training(
         first_pass_successes = 0
         extractor_recoveries = 0
         heuristic_fallbacks = 0
+        # Counter for restraint behavior (fraction of wait_and_observe per episode)
+        episode_wait_count = 0
 
         # JSON prefill: forces the model to continue a JSON object instead of
         # deciding the output format from scratch. Eliminates the "``` + spaces"
@@ -1062,6 +1068,12 @@ def run_training(
                 "step_reward":  step_reward,
                 "parse_status": parse_status,
             })
+            # Track restraint behavior — wait_and_observe usage per episode
+            try:
+                if getattr(action, "action_type", "") == "wait_and_observe":
+                    episode_wait_count += 1
+            except Exception:
+                pass
             step_count += 1
 
             if step_count % 30 == 0:
@@ -1129,6 +1141,18 @@ def run_training(
                 f"Trust={ep_breakdown['relationship_score']:.2f} | "
                 f"ToolFit={ep_breakdown['tool_appropriateness']:.1%}"
             )
+            # Persist the business-outcome curves alongside the RL-machinery curves
+            episode_npa_rates.append(float(ep_breakdown.get("npa_rate", 0.0)))
+            episode_trust_scores.append(float(ep_breakdown.get("relationship_score", 0.0)))
+        else:
+            # Fall back to portfolio_summary if env did not emit episode_reward_breakdown
+            episode_npa_rates.append(float(portfolio_sum.get("npa_rate", 0.0)))
+            episode_trust_scores.append(float(portfolio_sum.get("avg_trust_score", 0.0)))
+        episode_wait_ratios.append(episode_wait_count / max(1, step_count))
+        print(
+            f"    Restraint: wait_and_observe used "
+            f"{episode_wait_count}/{step_count} ({episode_wait_ratios[-1]:.1%})"
+        )
 
         # FIX 2: Mini-batching (Solves the OOM Crash)
         if len(all_steps) >= max_steps_per_episode:
@@ -1230,6 +1254,9 @@ def run_training(
                         "kl":                  episode_kls,
                         "entropy":             episode_entropies,
                         "parse_failure_rates": parse_failure_rates,
+                        "npa_rates":           episode_npa_rates,
+                        "trust_scores":        episode_trust_scores,
+                        "wait_ratios":         episode_wait_ratios,
                     }, f)
                 _save_reward_plot(
                     episode_rewards,
@@ -1238,6 +1265,9 @@ def run_training(
                     episode_kls=episode_kls,
                     episode_entropies=episode_entropies,
                     parse_failure_rates=parse_failure_rates,
+                    episode_npa_rates=episode_npa_rates,
+                    episode_trust_scores=episode_trust_scores,
+                    episode_wait_ratios=episode_wait_ratios,
                 )
                 print(f"  Checkpoint saved: {ckpt_path}")
             except Exception as e:
@@ -1251,7 +1281,26 @@ def run_training(
         episode_kls=episode_kls,
         episode_entropies=episode_entropies,
         parse_failure_rates=parse_failure_rates,
+        episode_npa_rates=episode_npa_rates,
+        episode_trust_scores=episode_trust_scores,
+        episode_wait_ratios=episode_wait_ratios,
     )
+    # Final JSON dump so downstream plotters / hero-image script can reuse it
+    try:
+        with open(os.path.join(output_dir, "reward_curve.json"), "w") as f:
+            json.dump({
+                "episodes":            list(range(1, len(episode_rewards) + 1)),
+                "rewards":             episode_rewards,
+                "losses":              episode_losses,
+                "kl":                  episode_kls,
+                "entropy":             episode_entropies,
+                "parse_failure_rates": parse_failure_rates,
+                "npa_rates":           episode_npa_rates,
+                "trust_scores":        episode_trust_scores,
+                "wait_ratios":         episode_wait_ratios,
+            }, f)
+    except Exception as e:
+        print(f"Final JSON dump failed: {e}")
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE")
     print(f"Final episode reward: {episode_rewards[-1]:.4f}")
@@ -1471,12 +1520,19 @@ def _save_reward_plot(
     episode_kls: Optional[List[float]] = None,
     episode_entropies: Optional[List[float]] = None,
     parse_failure_rates: Optional[List[float]] = None,
+    episode_npa_rates: Optional[List[float]] = None,
+    episode_trust_scores: Optional[List[float]] = None,
+    episode_wait_ratios: Optional[List[float]] = None,
 ) -> None:
     """Save the headline reward_curve.png plus a multi-metric training_metrics.png.
 
-    The multi-metric plot (Reward / Loss / KL / Entropy / Parse-failure %) is
-    what hackathon judges look for under FAQ Q17 — multiple monitored metrics
-    proving the run was actually instrumented end-to-end, not just rewarded.
+    Top row  — RL machinery: Reward, Rolling-Mean Reward, GRPO Loss
+    Middle row — Stability:  KL anchor, Token Entropy, Parse-failure %
+    Bottom row — *Business outcomes the agent is actually learning*:
+                NPA %, Trust score, wait_and_observe restraint %
+
+    The bottom row is the killer panel for the README: it shows that the
+    policy didn't just minimize a loss — it learned the *task*.
     """
     if not episode_rewards:
         return
@@ -1519,76 +1575,156 @@ def _save_reward_plot(
         plt.close(fig)
 
         # ------------------------------------------------------------------
-        # PLOT 2 — multi-metric dashboard: Reward / Loss / KL / Entropy /
-        # Parse-failure rate. This is the figure to put in the README.
+        # PLOT 2 — multi-metric dashboard. THREE rows now:
+        #   Row 0 — RL signal: reward, rolling reward, GRPO loss
+        #   Row 1 — Stability: KL, entropy, parse-failure
+        #   Row 2 — BUSINESS OUTCOMES the agent learned: NPA, trust, restraint
+        # The third row is the differentiator — it shows the policy actually
+        # learned the *task* rather than just minimising a loss.
         # ------------------------------------------------------------------
-        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        n_ep = len(episode_rewards)
+        fig, axes = plt.subplots(3, 3, figsize=(18, 14))
 
-        # (0,0) Reward
-        axes[0, 0].plot(episodes, episode_rewards, color="#1f77b4", linewidth=1.5, alpha=0.6)
-        if len(episode_rewards) >= 5:
-            w = min(10, len(episode_rewards) // 3)
+        def _annotate_first_last(ax, ys):
+            """Put a small first/last label on a curve so deltas pop visually."""
+            if not ys:
+                return
+            ax.annotate(f"{ys[0]:.2f}", xy=(1, ys[0]), xytext=(4, 4),
+                        textcoords="offset points", fontsize=8, color="#444")
+            ax.annotate(f"{ys[-1]:.2f}", xy=(len(ys), ys[-1]), xytext=(4, 4),
+                        textcoords="offset points", fontsize=8, color="#000",
+                        fontweight="bold")
+
+        # ---------------- ROW 0 — RL signal ----------------
+
+        # (0,0) Episode reward (raw + smoothed overlay)
+        axes[0, 0].plot(episodes, episode_rewards, color="#1f77b4",
+                        linewidth=1.5, alpha=0.6, label="per-episode")
+        if n_ep >= 5:
+            w = min(10, n_ep // 3)
             smoothed = np.convolve(episode_rewards, np.ones(w) / w, mode="valid")
-            axes[0, 0].plot(list(range(w, len(episode_rewards) + 1)), smoothed,
-                            color="#d62728", linewidth=2.5)
-        axes[0, 0].set_title("Episode Reward")
+            axes[0, 0].plot(list(range(w, n_ep + 1)), smoothed,
+                            color="#d62728", linewidth=2.5, label=f"moving avg (w={w})")
+        axes[0, 0].set_title("Episode Reward (RL signal)", fontweight="bold")
         axes[0, 0].set_xlabel("Episode"); axes[0, 0].set_ylabel("Reward")
         axes[0, 0].grid(True, linestyle="--", alpha=0.5)
+        axes[0, 0].legend(loc="best", fontsize=9)
+        _annotate_first_last(axes[0, 0], episode_rewards)
 
         # (0,1) Rolling mean reward
         axes[0, 1].plot(episodes, rolling, color="#2ca02c", linewidth=2.5)
-        axes[0, 1].set_title(f"Rolling Mean Reward (w={window})")
+        axes[0, 1].set_title(f"Rolling Mean Reward (w={window})", fontweight="bold")
         axes[0, 1].set_xlabel("Episode"); axes[0, 1].set_ylabel("Reward")
         axes[0, 1].grid(True, linestyle="--", alpha=0.5)
+        _annotate_first_last(axes[0, 1], rolling)
 
-        # (0,2) GRPO loss
+        # (0,2) GRPO policy loss
         if episode_losses:
             axes[0, 2].plot(list(range(1, len(episode_losses) + 1)), episode_losses,
                             color="#9467bd", linewidth=2)
-            axes[0, 2].set_title("GRPO Policy Loss (per-episode mean)")
+            axes[0, 2].set_title("GRPO Policy Loss", fontweight="bold")
             axes[0, 2].set_xlabel("Episode"); axes[0, 2].set_ylabel("Loss")
             axes[0, 2].grid(True, linestyle="--", alpha=0.5)
             axes[0, 2].axhline(0, color="gray", linewidth=0.8, alpha=0.6)
         else:
             axes[0, 2].set_visible(False)
 
-        # (1,0) KL divergence vs frozen SFT reference (lower = closer to SFT,
-        # 0 = no drift). The KL anchor in the loss keeps this bounded.
+        # ---------------- ROW 1 — stability ----------------
+
+        # (1,0) KL divergence vs frozen reference
         if episode_kls:
             axes[1, 0].plot(list(range(1, len(episode_kls) + 1)), episode_kls,
                             color="#ff7f0e", linewidth=2)
-            axes[1, 0].set_title("KL Divergence vs SFT Reference")
+            axes[1, 0].set_title("KL Divergence vs Reference (anchor)", fontweight="bold")
             axes[1, 0].set_xlabel("Episode"); axes[1, 0].set_ylabel("KL")
             axes[1, 0].grid(True, linestyle="--", alpha=0.5)
+            axes[1, 0].axhline(0.05, color="red", linestyle=":", linewidth=1.0,
+                               alpha=0.6, label="soft drift cap (0.05)")
+            axes[1, 0].legend(loc="best", fontsize=9)
         else:
             axes[1, 0].set_visible(False)
 
-        # (1,1) Token-level entropy of the completion distribution (higher =
-        # more exploration; collapse to ~0 means mode collapse).
+        # (1,1) Token-level entropy
         if episode_entropies:
             axes[1, 1].plot(list(range(1, len(episode_entropies) + 1)), episode_entropies,
                             color="#17becf", linewidth=2)
-            axes[1, 1].set_title("Completion Token Entropy")
+            axes[1, 1].set_title("Completion Token Entropy", fontweight="bold")
             axes[1, 1].set_xlabel("Episode"); axes[1, 1].set_ylabel("H (nats)")
             axes[1, 1].grid(True, linestyle="--", alpha=0.5)
+            _annotate_first_last(axes[1, 1], episode_entropies)
         else:
             axes[1, 1].set_visible(False)
 
-        # (1,2) Parse-failure rate — proxy for format adherence.
+        # (1,2) Parse-failure rate
         if parse_failure_rates:
             pct = [r * 100.0 for r in parse_failure_rates]
             axes[1, 2].plot(list(range(1, len(pct) + 1)), pct,
                             color="#8c564b", linewidth=2)
-            axes[1, 2].set_title("Parse-Failure Rate")
+            axes[1, 2].set_title("Parse-Failure Rate (format adherence)", fontweight="bold")
             axes[1, 2].set_xlabel("Episode"); axes[1, 2].set_ylabel("% of steps")
             axes[1, 2].set_ylim(0, max(5.0, max(pct) * 1.1))
             axes[1, 2].grid(True, linestyle="--", alpha=0.5)
         else:
             axes[1, 2].set_visible(False)
 
-        fig.suptitle("MSME-RL Training Metrics — GRPO + KL anchor + Entropy bonus",
-                     fontsize=14, fontweight="bold")
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        # ---------------- ROW 2 — business outcomes ----------------
+
+        # (2,0) NPA % per episode — lower is better
+        if episode_npa_rates:
+            npa_pct = [r * 100.0 for r in episode_npa_rates]
+            axes[2, 0].plot(list(range(1, len(npa_pct) + 1)), npa_pct,
+                            color="#d62728", linewidth=2.5, marker="o", markersize=4)
+            axes[2, 0].set_title("NPA Rate per Episode  (lower = better)",
+                                 fontweight="bold")
+            axes[2, 0].set_xlabel("Episode"); axes[2, 0].set_ylabel("NPA %")
+            axes[2, 0].set_ylim(0, max(40.0, max(npa_pct) * 1.1))
+            axes[2, 0].grid(True, linestyle="--", alpha=0.5)
+            axes[2, 0].axhline(5.0, color="green", linestyle=":", linewidth=1.0,
+                               alpha=0.6, label="Indian banking benchmark (~5%)")
+            axes[2, 0].legend(loc="best", fontsize=9)
+            _annotate_first_last(axes[2, 0], npa_pct)
+        else:
+            axes[2, 0].set_visible(False)
+
+        # (2,1) Trust score per episode — higher is better
+        if episode_trust_scores:
+            axes[2, 1].plot(list(range(1, len(episode_trust_scores) + 1)),
+                            episode_trust_scores,
+                            color="#2ca02c", linewidth=2.5, marker="o", markersize=4)
+            axes[2, 1].set_title("Avg Portfolio Trust  (higher = better)",
+                                 fontweight="bold")
+            axes[2, 1].set_xlabel("Episode"); axes[2, 1].set_ylabel("Trust [0–1]")
+            axes[2, 1].set_ylim(0, 1.0)
+            axes[2, 1].grid(True, linestyle="--", alpha=0.5)
+            _annotate_first_last(axes[2, 1], episode_trust_scores)
+        else:
+            axes[2, 1].set_visible(False)
+
+        # (2,2) Restraint — wait_and_observe usage per episode
+        if episode_wait_ratios:
+            wait_pct = [r * 100.0 for r in episode_wait_ratios]
+            axes[2, 2].plot(list(range(1, len(wait_pct) + 1)), wait_pct,
+                            color="#1f77b4", linewidth=2.5, marker="o", markersize=4)
+            axes[2, 2].set_title("Restraint: wait_and_observe Usage", fontweight="bold")
+            axes[2, 2].set_xlabel("Episode"); axes[2, 2].set_ylabel("% of steps")
+            axes[2, 2].set_ylim(0, max(60.0, max(wait_pct) * 1.1))
+            axes[2, 2].grid(True, linestyle="--", alpha=0.5)
+            axes[2, 2].axhline(5.0, color="gray", linestyle=":", linewidth=1.0,
+                               alpha=0.6, label="random baseline (1/21 ≈ 5%)")
+            axes[2, 2].legend(loc="best", fontsize=9)
+            _annotate_first_last(axes[2, 2], wait_pct)
+        else:
+            axes[2, 2].set_visible(False)
+
+        fig.suptitle(
+            "MSME-RL Training Dashboard  —  GRPO · Qwen2.5-1.5B-Instruct",
+            fontsize=16, fontweight="bold",
+        )
+        fig.text(0.5, 0.965,
+                 f"30-episode run · {n_ep} episodes shown · "
+                 "RL signal (top) · stability (mid) · business outcomes (bottom)",
+                 ha="center", fontsize=10, color="#555")
+        fig.tight_layout(rect=(0, 0, 1, 0.955))
         metrics_path = os.path.join(output_dir, "training_metrics.png")
         plt.savefig(metrics_path, dpi=150, bbox_inches="tight")
         plt.close(fig)

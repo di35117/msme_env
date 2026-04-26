@@ -259,6 +259,7 @@ def _run_policy(label: str, policy, seeds: List[int], max_steps: int) -> List[Di
 
 
 def _plot_aggregate(base_runs, trained_runs, n_eps, out_png: Path) -> None:
+    """Side-by-side bars per episode + a giant aggregate Δ summary on top."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -271,36 +272,230 @@ def _plot_aggregate(base_runs, trained_runs, n_eps, out_png: Path) -> None:
     base_t    = [r["final_trust"]    or 0 for r in base_runs]
     trained_t = [r["final_trust"]    or 0 for r in trained_runs]
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    # Aggregate deltas — these go in the title for at-a-glance impact.
+    mr_b, mr_t = float(np.mean(base_r)),  float(np.mean(trained_r))
+    mn_b, mn_t = float(np.mean(base_n)),  float(np.mean(trained_n))
+    mt_b, mt_t = float(np.mean(base_t)),  float(np.mean(trained_t))
+
+    def _pct(delta, denom):
+        return (delta / abs(denom)) * 100 if denom else 0.0
+
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5.6))
     x = np.arange(n_eps); w = 0.4
 
-    axes[0].bar(x - w/2, base_r,    w, label="Before RL (base)", color="#bbbbbb")
-    axes[0].bar(x + w/2, trained_r, w, label="After RL (trained)", color="#1f77b4")
+    # ---- Panel 1: cumulative episode reward ----
+    bars0a = axes[0].bar(x - w/2, base_r,    w, label="Before RL (base)",    color="#bbbbbb")
+    bars0b = axes[0].bar(x + w/2, trained_r, w, label="After RL (trained)", color="#1f77b4")
     axes[0].axhline(0, color="black", lw=0.6)
-    axes[0].set_title("Cumulative episode reward (higher is better)")
+    axes[0].set_title(
+        f"Cumulative reward  (higher is better)\n"
+        f"mean Δ = {mr_t-mr_b:+.2f}  ({_pct(mr_t-mr_b, mr_b):+.0f}%)",
+        fontsize=12, fontweight="bold",
+    )
     axes[0].set_ylabel("reward"); axes[0].set_xlabel("episode")
     axes[0].set_xticks(x); axes[0].set_xticklabels([f"Ep {i+1}" for i in range(n_eps)])
-    axes[0].grid(axis="y", ls="--", alpha=0.4); axes[0].legend()
+    axes[0].grid(axis="y", ls="--", alpha=0.4); axes[0].legend(loc="best", fontsize=9)
+    for b in list(bars0a) + list(bars0b):
+        h = b.get_height()
+        axes[0].annotate(f"{h:.1f}", xy=(b.get_x()+b.get_width()/2, h),
+                         xytext=(0, 3 if h >= 0 else -10), textcoords="offset points",
+                         ha="center", fontsize=8)
 
-    axes[1].bar(x - w/2, base_n,    w, label="Before RL (base)", color="#bbbbbb")
-    axes[1].bar(x + w/2, trained_n, w, label="After RL (trained)", color="#d62728")
-    axes[1].set_title("Final NPA rate (lower is better)")
+    # ---- Panel 2: final NPA rate ----
+    bars1a = axes[1].bar(x - w/2, base_n,    w, label="Before RL (base)",    color="#bbbbbb")
+    bars1b = axes[1].bar(x + w/2, trained_n, w, label="After RL (trained)", color="#d62728")
+    axes[1].set_title(
+        f"Final NPA %  (lower is better)\n"
+        f"mean Δ = {mn_t-mn_b:+.1f} pts  ({_pct(mn_t-mn_b, mn_b):+.0f}%)",
+        fontsize=12, fontweight="bold",
+    )
     axes[1].set_ylabel("NPA %"); axes[1].set_xlabel("episode")
     axes[1].set_xticks(x); axes[1].set_xticklabels([f"Ep {i+1}" for i in range(n_eps)])
-    axes[1].grid(axis="y", ls="--", alpha=0.4); axes[1].legend()
+    axes[1].grid(axis="y", ls="--", alpha=0.4); axes[1].legend(loc="best", fontsize=9)
+    for b in list(bars1a) + list(bars1b):
+        h = b.get_height()
+        axes[1].annotate(f"{h:.0f}%", xy=(b.get_x()+b.get_width()/2, h),
+                         xytext=(0, 3), textcoords="offset points",
+                         ha="center", fontsize=8)
 
-    axes[2].bar(x - w/2, base_t,    w, label="Before RL (base)", color="#bbbbbb")
-    axes[2].bar(x + w/2, trained_t, w, label="After RL (trained)", color="#2ca02c")
-    axes[2].set_title("Final trust score (higher is better)")
+    # ---- Panel 3: final trust score ----
+    bars2a = axes[2].bar(x - w/2, base_t,    w, label="Before RL (base)",    color="#bbbbbb")
+    bars2b = axes[2].bar(x + w/2, trained_t, w, label="After RL (trained)", color="#2ca02c")
+    axes[2].set_title(
+        f"Final trust score  (higher is better)\n"
+        f"mean Δ = {mt_t-mt_b:+.2f}  ({_pct(mt_t-mt_b, mt_b):+.0f}%)",
+        fontsize=12, fontweight="bold",
+    )
     axes[2].set_ylabel("trust"); axes[2].set_xlabel("episode")
     axes[2].set_xticks(x); axes[2].set_xticklabels([f"Ep {i+1}" for i in range(n_eps)])
-    axes[2].grid(axis="y", ls="--", alpha=0.4); axes[2].legend()
+    axes[2].set_ylim(0, 1.0)
+    axes[2].grid(axis="y", ls="--", alpha=0.4); axes[2].legend(loc="best", fontsize=9)
+    for b in list(bars2a) + list(bars2b):
+        h = b.get_height()
+        axes[2].annotate(f"{h:.2f}", xy=(b.get_x()+b.get_width()/2, h),
+                         xytext=(0, 3), textcoords="offset points",
+                         ha="center", fontsize=8)
 
-    fig.suptitle("MSME-RL: Before RL vs After RL (matched seeds)", fontsize=14, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.suptitle(
+        "MSME-RL: Before RL  vs  After RL  (matched seeds, identical env)",
+        fontsize=14, fontweight="bold",
+    )
+    fig.text(0.5, 0.945,
+             f"5 fixed-seed episodes per policy · same Qwen2.5-1.5B architecture · "
+             "trained = GRPO checkpoint",
+             ha="center", fontsize=9, color="#555")
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"\n  Saved → {out_png}")
+
+
+def _plot_msme_vs_startup(base_runs, trained_runs, out_png: Path) -> None:
+    """How does the trained policy treat MSME accounts (1-20) vs startup
+    accounts (21-30)? Two pillars of the central thesis (dual strategies)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    MSME_RANGE    = range(1, 21)
+    STARTUP_RANGE = range(21, 31)
+
+    def _split_action_pct(runs, account_range):
+        from collections import Counter
+        c = Counter()
+        total = 0
+        for r in runs:
+            for s in r["trace"]:
+                if s["account_id"] in account_range:
+                    c[s["action_type"]] += 1
+                    total += 1
+        return {a: (c.get(a, 0) / max(1, total)) * 100 for a in VALID_ACTIONS}, total
+
+    def _split_step_reward(runs, account_range):
+        sums, counts = [], 0
+        for r in runs:
+            ep_sum = 0.0
+            for s in r["trace"]:
+                if s["account_id"] in account_range:
+                    ep_sum += s["step_reward"]
+                    counts += 1
+            sums.append(ep_sum)
+        return float(np.mean(sums)) if sums else 0.0, counts
+
+    base_msme_dist,    n_msme_b    = _split_action_pct(base_runs,    MSME_RANGE)
+    trained_msme_dist, n_msme_t    = _split_action_pct(trained_runs, MSME_RANGE)
+    base_stp_dist,     n_stp_b     = _split_action_pct(base_runs,    STARTUP_RANGE)
+    trained_stp_dist,  n_stp_t     = _split_action_pct(trained_runs, STARTUP_RANGE)
+
+    base_msme_r, _    = _split_step_reward(base_runs,    MSME_RANGE)
+    trained_msme_r, _ = _split_step_reward(trained_runs, MSME_RANGE)
+    base_stp_r, _     = _split_step_reward(base_runs,    STARTUP_RANGE)
+    trained_stp_r, _  = _split_step_reward(trained_runs, STARTUP_RANGE)
+
+    # Coercive vs information-gathering action buckets — the two clusters
+    # the trained policy is supposed to swap probability mass between.
+    COERCIVE = {"initiate_sarfaesi", "file_drt_case", "refer_to_recovery_agent",
+                "send_legal_notice_section13"}
+    INFO     = {"verify_gst_returns", "pull_bank_statements",
+                "check_industry_cluster_stress", "request_investor_update_meeting",
+                "check_startup_ecosystem_signals", "wait_and_observe"}
+
+    def _bucket(dist, keys):
+        return sum(dist.get(k, 0.0) for k in keys)
+
+    cats   = ["MSME accts (1–20)", "Startup accts (21–30)"]
+    base_c = [_bucket(base_msme_dist, COERCIVE), _bucket(base_stp_dist, COERCIVE)]
+    trnd_c = [_bucket(trained_msme_dist, COERCIVE), _bucket(trained_stp_dist, COERCIVE)]
+    base_i = [_bucket(base_msme_dist, INFO),     _bucket(base_stp_dist, INFO)]
+    trnd_i = [_bucket(trained_msme_dist, INFO), _bucket(trained_stp_dist, INFO)]
+
+    fig, axes = plt.subplots(1, 3, figsize=(17, 5.2))
+    x = np.arange(2); w = 0.35
+
+    axes[0].bar(x - w/2, base_c, w, label="Before RL", color="#bbbbbb")
+    axes[0].bar(x + w/2, trnd_c, w, label="After RL",  color="#d62728")
+    axes[0].set_title("% Coercive actions  (sarfaesi / drt / agent / sec13)\nlower is better — esp. on startups",
+                      fontsize=11, fontweight="bold")
+    axes[0].set_ylabel("% of decisions on these accounts")
+    axes[0].set_xticks(x); axes[0].set_xticklabels(cats)
+    axes[0].grid(axis="y", ls="--", alpha=0.4); axes[0].legend(fontsize=9)
+    for i, (b, t) in enumerate(zip(base_c, trnd_c)):
+        axes[0].annotate(f"Δ {t-b:+.1f} pts", xy=(i, max(b, t) + 1.5),
+                         ha="center", fontsize=9, fontweight="bold")
+
+    axes[1].bar(x - w/2, base_i, w, label="Before RL", color="#bbbbbb")
+    axes[1].bar(x + w/2, trnd_i, w, label="After RL",  color="#2ca02c")
+    axes[1].set_title("% Information / restraint actions\nhigher is better",
+                      fontsize=11, fontweight="bold")
+    axes[1].set_ylabel("% of decisions on these accounts")
+    axes[1].set_xticks(x); axes[1].set_xticklabels(cats)
+    axes[1].grid(axis="y", ls="--", alpha=0.4); axes[1].legend(fontsize=9)
+    for i, (b, t) in enumerate(zip(base_i, trnd_i)):
+        axes[1].annotate(f"Δ {t-b:+.1f} pts", xy=(i, max(b, t) + 1.5),
+                         ha="center", fontsize=9, fontweight="bold")
+
+    axes[2].bar(x - w/2, [base_msme_r, base_stp_r], w, label="Before RL", color="#bbbbbb")
+    axes[2].bar(x + w/2, [trained_msme_r, trained_stp_r], w, label="After RL", color="#1f77b4")
+    axes[2].axhline(0, color="black", lw=0.6)
+    axes[2].set_title("Mean step-reward earned per episode\nfrom this account class",
+                      fontsize=11, fontweight="bold")
+    axes[2].set_ylabel("step-reward sum (per episode)")
+    axes[2].set_xticks(x); axes[2].set_xticklabels(cats)
+    axes[2].grid(axis="y", ls="--", alpha=0.4); axes[2].legend(fontsize=9)
+
+    fig.suptitle("Dual-Strategy Learning  —  MSME (understatement)  vs  Startup (overstatement)",
+                 fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved → {out_png}")
+
+
+def _plot_action_shift(base_runs, trained_runs, out_png: Path) -> None:
+    """Single horizontal bar chart showing which actions INCREASED and which
+    DECREASED after RL. The clearest single visual that learning happened."""
+    from collections import Counter
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    def dist(runs):
+        c = Counter(); total = 0
+        for r in runs:
+            for s in r["trace"]:
+                c[s["action_type"]] += 1; total += 1
+        return {a: (c.get(a, 0) / max(1, total)) * 100 for a in VALID_ACTIONS}
+
+    bd, td = dist(base_runs), dist(trained_runs)
+    diff = sorted(
+        [(a, td[a] - bd[a]) for a in VALID_ACTIONS],
+        key=lambda x: x[1],
+    )
+    actions, deltas = zip(*diff)
+    colors = ["#d62728" if d < 0 else "#2ca02c" for d in deltas]
+
+    fig, ax = plt.subplots(figsize=(11, 8))
+    ys = np.arange(len(actions))
+    ax.barh(ys, deltas, color=colors, edgecolor="black", linewidth=0.5)
+    ax.set_yticks(ys); ax.set_yticklabels(actions, fontsize=9)
+    ax.axvline(0, color="black", lw=0.8)
+    ax.set_xlabel("Δ usage  (percentage points: trained − base)", fontsize=10)
+    ax.set_title(
+        "Policy shift after RL  —  what the agent learned to use MORE (green)  vs  LESS (red)",
+        fontsize=12, fontweight="bold",
+    )
+    ax.grid(axis="x", ls="--", alpha=0.4)
+    for i, d in enumerate(deltas):
+        ax.annotate(f"{d:+.1f}", xy=(d, i),
+                    xytext=(4 if d >= 0 else -4, 0), textcoords="offset points",
+                    ha="left" if d >= 0 else "right", va="center",
+                    fontsize=8, fontweight="bold")
+    fig.tight_layout()
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved → {out_png}")
 
 
 def _plot_action_dist(base_runs, trained_runs, out_png: Path) -> None:
@@ -386,16 +581,26 @@ def main() -> None:
     print("\n" + "=" * 72)
     print("Plotting")
     print("=" * 72)
-    aggregate_png = out_dir / "inference_before_after.png"
-    action_png    = out_dir / "inference_action_distribution_before_after.png"
+    aggregate_png    = out_dir / "inference_before_after.png"
+    action_png       = out_dir / "inference_action_distribution_before_after.png"
+    msme_startup_png = out_dir / "inference_msme_vs_startup.png"
+    action_shift_png = out_dir / "inference_action_shift.png"
     _plot_aggregate(base_runs, trained_runs, args.episodes, aggregate_png)
     bd, td = _plot_action_dist(base_runs, trained_runs, action_png)
+    _plot_msme_vs_startup(base_runs, trained_runs, msme_startup_png)
+    _plot_action_shift(base_runs, trained_runs, action_shift_png)
 
     # ---- Audit JSON ---------------------------------------------------------
     sarfaesi_on_startup = lambda runs: sum(
         1 for r in runs for s in r["trace"]
         if s["action_type"] == "initiate_sarfaesi" and s["account_id"] in range(21, 31)
     )
+    def _mean(xs): return float(sum(xs) / max(1, len(xs)))
+    base_mean_npa    = _mean([(r["final_npa_rate"] or 0) for r in base_runs])
+    trained_mean_npa = _mean([(r["final_npa_rate"] or 0) for r in trained_runs])
+    base_mean_trust  = _mean([(r["final_trust"]    or 0) for r in base_runs])
+    trained_mean_trust = _mean([(r["final_trust"]  or 0) for r in trained_runs])
+
     audit = {
         "config": {
             "base":        args.base,
@@ -407,12 +612,20 @@ def main() -> None:
         "before_rl": {
             "per_episode": [{"seed": r["seed"], "reward": r["total_reward"], "npa": r["final_npa_rate"], "trust": r["final_trust"]} for r in base_runs],
             "mean_reward": base_mean,
+            "mean_npa":    base_mean_npa,
+            "mean_trust":  base_mean_trust,
         },
         "after_rl": {
             "per_episode": [{"seed": r["seed"], "reward": r["total_reward"], "npa": r["final_npa_rate"], "trust": r["final_trust"]} for r in trained_runs],
             "mean_reward": trained_mean,
+            "mean_npa":    trained_mean_npa,
+            "mean_trust":  trained_mean_trust,
         },
-        "improvement_after_rl": trained_mean - base_mean,
+        "improvement_after_rl": {
+            "reward_delta": trained_mean - base_mean,
+            "npa_delta":    trained_mean_npa - base_mean_npa,
+            "trust_delta":  trained_mean_trust - base_mean_trust,
+        },
         "sarfaesi_on_startup_count": {
             "before": sarfaesi_on_startup(base_runs),
             "after":  sarfaesi_on_startup(trained_runs),
