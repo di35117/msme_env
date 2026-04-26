@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MSME RL — Artifacts &amp; training log</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="app page-simple">
+  <header class="top-simple">
+    <h1>MSME-RL submission view</h1>
+    <p class="muted">Open with VS Code Live Server from the repo root so <code>../../artifacts/</code> resolves. Log: <code>training_log.txt</code> in this folder.</p>
+  </header>
+
+  <main class="main-simple">
+    <section class="panel">
+      <div class="panel-title-row">
+        <h3>Artifact images (6)</h3>
+        <span class="muted">repo <code>artifacts/&lt;file&gt;</code></span>
+      </div>
+      <div id="artifactGallery" class="gallery"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h3>Training console log</h3>
+        <span class="muted">scrollable</span>
+      </div>
+      <pre id="trainingLog" class="code code-log">Loading…</pre>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
