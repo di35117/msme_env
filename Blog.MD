@@ -131,7 +131,7 @@ Episode 2 is the critical moment. Episode 1 went well, which created large posit
 
 Episode 10 was a full trust collapse. The score dropped from 0.65 to 0.37 within a single episode — accounts stopped responding entirely. Something the agent did in episode 10 systematically damaged relationships across the whole portfolio. I didn't plan that event. The simulation produced it. I stared at it for a long time.
 
-By episode 28, the picture had shifted in ways I found genuinely surprising.
+By episode 30, the picture had shifted in ways I found genuinely surprising.
 
 > **SARFAESI on startups: ~7% of startup steps at baseline. After training: near zero. No rule in the prompt says never do this. The model learned from the penalty alone.**
 
