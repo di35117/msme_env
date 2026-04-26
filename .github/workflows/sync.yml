@@ -28,4 +28,4 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         # This uploads the remaining files directly to your space
         run: |
-          huggingface-cli upload di35117/msmefinal . . --repo-type=space
+          huggingface-cli upload di35117/submissionfinal . . --repo-type=space
