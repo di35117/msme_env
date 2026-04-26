@@ -1126,6 +1126,7 @@ def run_training(
                 "completion":   completion_suffix_for_training,
                 "step_reward":  step_reward,
                 "parse_status": parse_status,
+                "account_id":   int(getattr(action, "account_id", 0) or 0),
             })
             # Track restraint behavior — wait_and_observe usage per episode
             try:
@@ -1194,16 +1195,30 @@ def run_training(
             for step_data in episode_step_data:
                 step_data["reward"] += bonus
 
+        # Advantages: z-score within each account's steps **in this episode only**
+        # (Claude-style group-relative signal) with episode-wide fallback when an
+        # account appears once — avoids mixing unrelated accounts without mixing
+        # different episodes in one normalization (unlike a buggy global sort).
         if episode_step_data:
-            import torch as _torch_ep
+            from collections import defaultdict
 
-            _er = _torch_ep.tensor(
-                [s["reward"] for s in episode_step_data], dtype=_torch_ep.float32
-            )
-            _m = _er.mean().item()
-            _sd = _er.std().item() + 1e-8
-            for step_data in episode_step_data:
-                step_data["advantage"] = (step_data["reward"] - _m) / _sd
+            _eps = 1e-8
+            all_r = [s["reward"] for s in episode_step_data]
+            ep_mean = sum(all_r) / len(all_r)
+            ep_std = (sum((r - ep_mean) ** 2 for r in all_r) / len(all_r)) ** 0.5 + _eps
+            by_account: Dict[int, List[Dict]] = defaultdict(list)
+            for s in episode_step_data:
+                by_account[int(s.get("account_id", 0) or 0)].append(s)
+            for _aid, acc_steps in by_account.items():
+                rlist = [x["reward"] for x in acc_steps]
+                if len(rlist) < 2:
+                    for x in acc_steps:
+                        x["advantage"] = (x["reward"] - ep_mean) / ep_std
+                else:
+                    m = sum(rlist) / len(rlist)
+                    sd = (sum((r - m) ** 2 for r in rlist) / len(rlist)) ** 0.5 + _eps
+                    for x in acc_steps:
+                        x["advantage"] = (x["reward"] - m) / sd
 
         all_steps.extend(episode_step_data)
 
@@ -1255,8 +1270,9 @@ def run_training(
             f"{episode_wait_count}/{step_count} ({episode_wait_ratios[-1]:.1%})"
         )
 
-        # Mini-batching — advantages are normalized **per episode** only (above),
-        # so we do not z-score mix incompatible scales across episodes.
+        # Mini-batching — advantages are normalized per account within each episode
+        # (above), so we do not z-score unrelated accounts together; episodes stay
+        # separate until concatenated for the update buffer.
 
         if len(all_steps) >= max_steps_per_episode:
             import torch
