@@ -172,7 +172,8 @@ def make_llm_policy(model, tokenizer, device: str) -> Callable[[Dict[str, Any]],
 def run_episode(policy, seed: int, max_steps: int = 60) -> Dict[str, Any]:
     _seed_everything(seed)
     env = MSMERLEnvironment()
-    obs = _obs_to_dict(env.reset())
+    # world_generator uses hash(episode, …), not random/numpy/torch — seed must map here
+    obs = _obs_to_dict(env.reset(world_episode=seed))
 
     trace: List[Dict[str, Any]] = []
     cum = 0.0
