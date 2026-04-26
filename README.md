@@ -16,9 +16,18 @@ This is a fundamental gap. In the real world, the most important information is 
 
 Linguistic decoding is the skill of inferring latent intent, hidden state, and real motive from what is said, how it is said, what is avoided, and how all of that changes across a temporal sequence. Teaching this to an AI system is a vast, open research problem. There is no clean dataset, no obvious loss function, and no single domain where it is fully solved.
 
+
+
+
+
+
+
+
 ---
 
 ## Scope — What We Built for This Hackathon
+
+
 
 Linguistic decoding as a general problem is enormous. Narrowing it to something tractable within a hackathon timeline — while still producing real, meaningful results — required a deliberate choice of domain.
 
@@ -35,6 +44,8 @@ Supervised learning teaches an agent to match outputs to labels. It cannot teach
 This is a long-horizon planning problem. The right intervention at step 30 depends on what happened at steps 1 through 29. A premature escalation on a healthy entity is as damaging as inaction on a failing one. The agent must learn not just *what* to infer but *when* to act on it — and how much weight to give a single message versus an accumulated pattern.
 
 GRPO-based training over multi-step episodes with delayed episode rewards makes this tractable — rewarding the agent for the quality of its full trajectory, not just individual decisions.
+
+
 
 ---
 
@@ -66,6 +77,11 @@ The environment generates a fully synthetic but internally consistent world for 
 
 **The world evolves across steps.** A well-timed field visit slows deterioration. Inaction accelerates it. Messages and behavioral signals update each step to reflect the new underlying state. The agent is not reading a static transcript — it is navigating a living system that responds to its choices.
 
+
+
+
+
+
 The world modelling is what prevents the agent from memorizing patterns. It must generalize a reasoning process that works across varied entities, bias levels, financial conditions, and deterioration trajectories.
 
 ---
@@ -87,17 +103,12 @@ Training across both domains is intentional — opposite bias directions force t
 healthy → watch → substandard → doubtful → loss
 ```
 
+
+
 ### Intervention Actions
 
 | Action | Best Used When |
-|--------|---------------|
-| `request_audited_financials` | Early warning signals present |
-| `trigger_field_visit` | Behavioral avoidance + document gaps |
-| `offer_restructuring` | Confirmed stress, cooperative entity |
-| `escalate_to_credit_committee` | Doubtful classification, high exposure |
-| `schedule_follow_up` | Healthy or minor watch signals |
-| `flag_for_npa` | Loss classification confirmed |
-| `do_nothing` | Genuinely healthy, low-risk entity |
+@@ -109,10 +101,10 @@ Each level maps to calibrated financial snapshots, behavioral profiles, and mess
 
 ### Reward Structure
 
@@ -108,20 +119,7 @@ healthy → watch → substandard → doubtful → loss
 
 ---
 
-## Architecture
-
-```
-Agent Policy (LLM)
-        │
-        ▼
-OpenEnv Server          server/app.py
-        │
-        ▼
-Environment Core        server/msmeEnv_environment.py
-        │
-        ▼
-Domain Adapter Registry domains/__init__.py
-        │
+@@ -133,8 +125,8 @@ Domain Adapter Registry domains/__init__.py
         ▼
 MSME + Startup Adapter  domains/msme_startup/adapter.py
         │
@@ -130,20 +128,17 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
         ├──▶ reward.py               — step + episode reward logic
         ├──▶ network.py              — peer entity contagion effects
         └──▶ memory.py               — cross-step state accumulation
-```
-
----
+@@ -144,9 +136,7 @@ MSME + Startup Adapter  domains/msme_startup/adapter.py
 
 ## Training Results
 
 We trained for 30 episodes with each episode capped at 90 steps, fine-tuning a **Qwen 1.5B** model with GRPO on this reinforcement learning task. Both numbers reflect resource constraints, not design ceilings — the environment is built for trajectories of 300–500 steps where the long-horizon dynamics are fully expressed. Within these limits, the goal was proof of concept: does the reward signal improve, does the policy stabilize, does the agent develop domain-differentiated strategies across MSME and startup profiles.
 
+
+
 The answer to all three is yes.
 
-### Reward Convergence & Loss Stability
-
-| Reward Curve | Training Loss |
-|:---:|:---:|
+@@ -157,13 +147,13 @@ The answer to all three is yes.
 | ![training reward](./artifacts/training_reward.jpg) | ![policy loss](./artifacts/Policy%20Loss.jpg) |
 | Mean episode reward across 30 training iterations | Policy loss and KL divergence across training |
 
@@ -157,19 +152,11 @@ The untrained baseline defaults to low-commitment actions regardless of signal. 
 
 ### Training Metrics Dashboard
 
-![Training metrics](./artifacts/training_metric.jpg)
-
-This panel shows the RL signal and supporting stability metrics over 30 episodes: episode reward and rolling mean, GRPO policy loss, KL divergence vs anchor, completion token entropy, parse-failure rate, NPA rate per episode, average portfolio trust, and `wait_and_observe` usage.
-
-### Reward Curve (Zoomed)
-
-![Reward curve](./artifacts/reward_curve.png.jpg)
-
-This view isolates the reward trend with a moving average, making it easier to see the step-change in performance in the second half of training.
-
----
+@@ -181,33 +171,24 @@ This view isolates the reward trend with a moving average, making it easier to s
 
 ## Training & Evaluation Workflow
+
+
 
 ```bash
 # Baseline
@@ -178,13 +165,20 @@ py -3 scripts/run_baseline_eval.py --episodes 30 --output artifacts/baseline_rew
 # Train
 py -3 train_grpo.py --episodes 30 --max_steps 90 --output_dir msme_rl_checkpoints
 
+
+
+
 # Judge artifacts
 py -3 scripts/generate_judge_artifacts.py \
     --training_json msme_rl_checkpoints/reward_curve.json \
     --baseline_json artifacts/baseline_rewards.json \
     --output_dir artifacts
 
+
+
+
 # Deterministic eval
+
 py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 \
     --output artifacts/deterministic_eval.json
 
@@ -192,13 +186,7 @@ py -3 scripts/run_deterministic_eval.py --seed 123 --episodes 5 \
 py -3 scripts/pre_submit_check.py
 ```
 
----
-
-## Project Structure
-
-```
-msmeEnv/
-├── README.md
+@@ -221,19 +202,19 @@ msmeEnv/
 ├── openenv.yaml
 ├── pyproject.toml
 ├── __init__.py
@@ -218,14 +206,17 @@ msmeEnv/
 └── scripts/
     ├── run_baseline_eval.py
     ├── eval.py
-    ├── generate_judge_artifacts.py
-    ├── run_deterministic_eval.py
-    └── pre_submit_check.py
-```
+@@ -244,20 +225,14 @@ msmeEnv/
 
 ---
 
 ## What Comes Next
+
+
+
+
+
+
 
 The 90-step cap was a resource limitation, not a ceiling. At 300–500 steps, the long-horizon dynamics become fully visible — entities that appear healthy at step 20 but deteriorate by step 80, requiring the agent to hold and update its hypothesis across a much longer evidence window. That is where the real test of linguistic decoding lives.
 
