@@ -1,0 +1,119 @@
+{
+  "comparison": [
+    {
+      "policy": "random",
+      "episodes": 5,
+      "avg_reward": -0.16,
+      "avg_npa_rate": 0.26,
+      "avg_recovery_rate": 0.0158,
+      "avg_relationship_score": 0.6348,
+      "avg_tool_appropriateness": 0.0,
+      "avg_shortcut_penalty": 0.0,
+      "episodes_raw": [
+        {
+          "episode": 1,
+          "reward": 0.0,
+          "npa_rate": 0.1,
+          "recovery_rate": 0.0145,
+          "relationship_score": 0.6692,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 2,
+          "reward": -0.1667,
+          "npa_rate": 0.2667,
+          "recovery_rate": 0.018,
+          "relationship_score": 0.7076,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 3,
+          "reward": -0.2333,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0081,
+          "relationship_score": 0.4805,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 4,
+          "reward": -0.2,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.0222,
+          "relationship_score": 0.5905,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 5,
+          "reward": -0.2,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.0161,
+          "relationship_score": 0.7264,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        }
+      ]
+    },
+    {
+      "policy": "heuristic",
+      "episodes": 5,
+      "avg_reward": -0.16,
+      "avg_npa_rate": 0.26,
+      "avg_recovery_rate": 0.0158,
+      "avg_relationship_score": 0.6558,
+      "avg_tool_appropriateness": 0.0,
+      "avg_shortcut_penalty": 0.0,
+      "episodes_raw": [
+        {
+          "episode": 1,
+          "reward": 0.0,
+          "npa_rate": 0.1,
+          "recovery_rate": 0.0145,
+          "relationship_score": 0.6572,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 2,
+          "reward": -0.1667,
+          "npa_rate": 0.2667,
+          "recovery_rate": 0.018,
+          "relationship_score": 0.6389,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 3,
+          "reward": -0.2333,
+          "npa_rate": 0.3333,
+          "recovery_rate": 0.0081,
+          "relationship_score": 0.6416,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 4,
+          "reward": -0.2,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.0222,
+          "relationship_score": 0.6651,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        },
+        {
+          "episode": 5,
+          "reward": -0.2,
+          "npa_rate": 0.3,
+          "recovery_rate": 0.0161,
+          "relationship_score": 0.6761,
+          "tool_appropriateness": 0.0,
+          "shortcut_penalty": 0.0
+        }
+      ]
+    }
+  ],
+  "notes": "Use this as baseline-vs-policy evidence. Add trained-policy row after checkpoint integration."
+}
