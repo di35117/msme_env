@@ -6,6 +6,8 @@ colorTo: purple
 sdk: docker
 pinned: false
 app_port: 8000
+tags:
+  - openenv
 ---
 
 # 🧠 Linguistic Decoding RL
