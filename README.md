@@ -14,6 +14,7 @@ tags:
 
 - **Hugging Face Space (training runner)**: [msme-training-runner](https://huggingface.co/spaces/devgodl/msmeEnv)
 - **Colab notebook (training)**: [Open in Colab](https://colab.research.google.com/drive/1P7YalP0scTuiNrJGBPqwzdPRUkgN4f1w)
+- **Blog link**: [Blog link](https://huggingface.co/spaces/devgodl/msmeEnv/blob/main/Blog.MD)
 
 ---
 
